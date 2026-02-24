@@ -1,26 +1,181 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
+/* ─── Tailwind v4 Theme Tokens ─────────────────────────────── */
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-bg:           var(--bg);
+  --color-bg-secondary: var(--bg-secondary);
+  --color-fg:           var(--fg);
+  --color-fg-muted:     var(--fg-muted);
+  --color-accent:       var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-border:       var(--border-color);
+  --color-surface:      var(--surface);
+  --color-content-text:     var(--content-text);
+  --color-content-heading:  var(--content-heading);
+  --color-content-link:     var(--content-link);
+  --font-sans:          var(--font-geist-sans);
+  --font-mono:          var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+/* ─── 1. The Void (Default Dark) ───────────────────────────── */
+:root,
+[data-theme="the-void"] {
+  --bg:           #09090b;
+  --bg-secondary: #18181b;
+  --fg:           #e5e5e5;
+  --fg-muted:     #a1a1aa;
+  --accent:       #7e22ce;
+  --accent-hover: #9333ea;
+  --border-color: #27272a;
+  --surface:      #13131a;
+  --content-text:    #e5e5e5;
+  --content-heading: #ffffff;
+  --content-link:    #7e22ce;
+  color-scheme: dark;
+}
+
+/* ─── 2. Parchment (Light) ─────────────────────────────────── */
+[data-theme="parchment"] {
+  --bg:           #f4f1ea;
+  --bg-secondary: #ebe7dd;
+  --fg:           #2c241b;
+  --fg-muted:     #6b5e4f;
+  --accent:       #78350f;
+  --accent-hover: #92400e;
+  --border-color: #d6cfc2;
+  --surface:      #faf8f4;
+  --content-text:    #2c241b;
+  --content-heading: #1a150e;
+  --content-link:    #78350f;
+  color-scheme: light;
+}
+
+/* ─── 3. Blood Moon ────────────────────────────────────────── */
+[data-theme="blood-moon"] {
+  --bg:           #150f0f;
+  --bg-secondary: #1f1515;
+  --fg:           #d1d5db;
+  --fg-muted:     #9ca3af;
+  --accent:       #991b1b;
+  --accent-hover: #b91c1c;
+  --border-color: #3b1c1c;
+  --surface:      #1a1212;
+  --content-text:    #d1d5db;
+  --content-heading: #f3f4f6;
+  --content-link:    #991b1b;
+  color-scheme: dark;
+}
+
+/* ─── 4. Abyssal Sea ──────────────────────────────────────── */
+[data-theme="abyssal-sea"] {
+  --bg:           #020617;
+  --bg-secondary: #0c1426;
+  --fg:           #cbd5e1;
+  --fg-muted:     #94a3b8;
+  --accent:       #0891b2;
+  --accent-hover: #06b6d4;
+  --border-color: #1e293b;
+  --surface:      #0a101f;
+  --content-text:    #cbd5e1;
+  --content-heading: #e2e8f0;
+  --content-link:    #0891b2;
+  color-scheme: dark;
+}
+
+/* ─── 5. Ashen Ruins ──────────────────────────────────────── */
+[data-theme="ashen-ruins"] {
+  --bg:           #1c1917;
+  --bg-secondary: #292524;
+  --fg:           #d6d3d1;
+  --fg-muted:     #a8a29e;
+  --accent:       #9a3412;
+  --accent-hover: #c2410c;
+  --border-color: #44403c;
+  --surface:      #211f1d;
+  --content-text:    #d6d3d1;
+  --content-heading: #e7e5e4;
+  --content-link:    #9a3412;
+  color-scheme: dark;
+}
+
+/* ─── Base Styles ──────────────────────────────────────────── */
+*,
+*::before,
+*::after {
+  border-color: var(--border-color);
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background-color: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+/* ─── Scrollbar (Webkit) ───────────────────────────────────── */
+::-webkit-scrollbar {
+  width: 8px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg-secondary);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--fg-muted);
+}
+
+/* ─── Selection ────────────────────────────────────────────── */
+::selection {
+  background-color: var(--accent);
+  color: #ffffff;
+}
+
+/* ─── Focus ring ───────────────────────────────────────────── */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ─── Prose / Chapter Content Styling ──────────────────────── */
+.chapter-content { color: var(--content-text, var(--fg)); }
+.chapter-content h1 { font-size: 1.875rem; font-weight: 700; margin-bottom: 0.75rem; color: var(--content-heading, var(--fg)); }
+.chapter-content h2 { font-size: 1.5rem; font-weight: 600; margin-bottom: 0.5rem; color: var(--content-heading, var(--fg)); }
+.chapter-content h3 { font-size: 1.25rem; font-weight: 600; margin-bottom: 0.5rem; color: var(--content-heading, var(--fg)); }
+.chapter-content p  { margin-bottom: 1em; line-height: 1.8; }
+.chapter-content a { color: var(--content-link, var(--accent)); text-decoration: underline; }
+.chapter-content a:hover { opacity: 0.8; }
+.chapter-content blockquote {
+  border-left: 3px solid var(--content-link, var(--accent));
+  padding-left: 1rem;
+  margin: 1.5rem 0;
+  font-style: italic;
+  color: var(--fg-muted);
+}
+.chapter-content strong { font-weight: 700; }
+.chapter-content em { font-style: italic; }
+.chapter-content u { text-decoration: underline; }
+
+/* ─── TipTap Editor Styling ────────────────────────────────── */
+.tiptap {
+  outline: none;
+  min-height: 400px;
+  padding: 1rem;
+}
+.tiptap p { margin-bottom: 0.75em; }
+.tiptap p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  color: var(--fg-muted);
+  pointer-events: none;
+  height: 0;
+}
+.tiptap blockquote {
+  border-left: 3px solid var(--accent);
+  padding-left: 1rem;
+  margin: 1rem 0;
+  font-style: italic;
+  color: var(--fg-muted);
 }
