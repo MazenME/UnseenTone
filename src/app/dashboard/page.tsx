@@ -11,6 +11,10 @@ interface NovelAnalytics {
   chapter_count: number;
   total_words: number;
   total_comments: number;
+  novel_avg_rating: number;
+  novel_rating_count: number;
+  chapter_avg_rating: number;
+  chapter_rating_count: number;
   chapters: {
     id: string;
     chapter_number: number;
@@ -30,14 +34,36 @@ async function getAnalytics() {
     { data: novels },
     { count: totalComments },
     { data: bannedUsersData },
+    { data: allNovelRatings },
+    { data: allChapterRatings },
   ] = await Promise.all([
     supabase.from("users_profile").select("*", { count: "exact", head: true }),
     supabase.from("novels").select("id, title, slug, status, total_reads, created_at, cover_url"),
     supabase.from("comments").select("*", { count: "exact", head: true }).eq("is_deleted", false),
     supabase.from("users_profile").select("*", { count: "exact", head: true }).eq("is_banned", true),
+    supabase.from("novel_ratings").select("novel_id, rating"),
+    supabase.from("chapter_ratings").select("rating, chapters(novel_id)"),
   ]);
 
   const totalReads = (novels || []).reduce((sum, n) => sum + (n.total_reads || 0), 0);
+
+  // Aggregate novel ratings by novel
+  const nrMap: Record<string, { sum: number; count: number }> = {};
+  for (const r of (allNovelRatings || []) as any[]) {
+    if (!nrMap[r.novel_id]) nrMap[r.novel_id] = { sum: 0, count: 0 };
+    nrMap[r.novel_id].sum += r.rating;
+    nrMap[r.novel_id].count += 1;
+  }
+
+  // Aggregate chapter ratings by novel
+  const crMap: Record<string, { sum: number; count: number }> = {};
+  for (const r of (allChapterRatings || []) as any[]) {
+    const nid = r.chapters?.novel_id;
+    if (!nid) continue;
+    if (!crMap[nid]) crMap[nid] = { sum: 0, count: 0 };
+    crMap[nid].sum += r.rating;
+    crMap[nid].count += 1;
+  }
 
   // Get per-novel detailed analytics
   const novelAnalytics: NovelAnalytics[] = [];
@@ -79,6 +105,10 @@ async function getAnalytics() {
       chapter_count: chapterList.length,
       total_words: totalWords,
       total_comments: novelCommentCount || 0,
+      novel_avg_rating: nrMap[novel.id] ? Math.round((nrMap[novel.id].sum / nrMap[novel.id].count) * 10) / 10 : 0,
+      novel_rating_count: nrMap[novel.id]?.count || 0,
+      chapter_avg_rating: crMap[novel.id] ? Math.round((crMap[novel.id].sum / crMap[novel.id].count) * 10) / 10 : 0,
+      chapter_rating_count: crMap[novel.id]?.count || 0,
       chapters: chaptersWithComments,
     });
   }
@@ -218,12 +248,14 @@ export default async function DashboardPage() {
                 </div>
 
                 {/* Novel Stats Row */}
-                <div className="grid grid-cols-2 sm:grid-cols-5 gap-px bg-border">
+                <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-px bg-border">
                   {[
                     { label: "Total Reads", value: novel.total_reads.toLocaleString() },
                     { label: "Chapters", value: novel.chapter_count.toString() },
                     { label: "Words", value: novel.total_words.toLocaleString() },
                     { label: "Comments", value: novel.total_comments.toLocaleString() },
+                    { label: "Novel Rating", value: novel.novel_avg_rating > 0 ? `★ ${novel.novel_avg_rating.toFixed(1)}/10 (${novel.novel_rating_count})` : "—" },
+                    { label: "Ch. Rating", value: novel.chapter_avg_rating > 0 ? `★ ${novel.chapter_avg_rating.toFixed(1)}/10 (${novel.chapter_rating_count})` : "—" },
                     { label: "Share of Traffic", value: `${readPercent}%` },
                   ].map((s) => (
                     <div key={s.label} className="bg-surface px-4 py-3 text-center">
