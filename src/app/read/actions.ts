@@ -112,21 +112,21 @@ export async function getChapterComments(chapterId: string): Promise<CommentRow[
     user_reaction: userReactions[c.id] ?? null,
   }));
 
-  // Build tree: top-level comments + nested replies
+  // Build tree: recursive nesting at any depth
   const topLevel: CommentRow[] = [];
-  const replyMap: Record<string, CommentRow[]> = {};
+  const byId: Record<string, CommentRow> = {};
 
   for (const c of enriched) {
-    if (c.parent_id) {
-      if (!replyMap[c.parent_id]) replyMap[c.parent_id] = [];
-      replyMap[c.parent_id].push(c);
+    c.replies = [];
+    byId[c.id] = c;
+  }
+
+  for (const c of enriched) {
+    if (c.parent_id && byId[c.parent_id]) {
+      byId[c.parent_id].replies!.push(c);
     } else {
       topLevel.push(c);
     }
-  }
-
-  for (const c of topLevel) {
-    c.replies = replyMap[c.id] || [];
   }
 
   return topLevel;

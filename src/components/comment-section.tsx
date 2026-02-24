@@ -134,13 +134,17 @@ export default function CommentSection({ chapterId, userId }: Props) {
     return c.users_profile?.display_name || c.users_profile?.email?.split("@")[0] || "Anonymous";
   };
 
-  const renderComment = (c: CommentRow, isReply = false) => (
+  const renderComment = (c: CommentRow, depth = 0) => {
+    const indent = Math.min(depth, 3); // cap visual nesting at 3 levels
+    const mlClass = indent > 0 ? `ml-${indent * 4} sm:ml-${indent * 6}` : "";
+    return (
     <motion.div
       key={c.id}
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.3 }}
-      className={`bg-surface border border-border rounded-xl p-4 ${isReply ? "ml-8 sm:ml-12 border-l-2 border-l-accent/30" : ""}`}
+      className={`bg-surface border border-border rounded-xl p-4 ${depth > 0 ? "border-l-2 border-l-accent/30" : ""}`}
+      style={depth > 0 ? { marginLeft: `${Math.min(depth, 3) * 1.5}rem` } : undefined}
     >
       {/* Header */}
       <div className="flex items-center gap-3 mb-2">
@@ -172,40 +176,40 @@ export default function CommentSection({ chapterId, userId }: Props) {
 
       {/* Actions: Like / Dislike / Reply */}
       <div className="flex items-center gap-4 mt-3">
-        {/* Like */}
+        {/* Like (arrow up) */}
         <button
           onClick={() => handleReaction(c.id, "like")}
           disabled={!userId}
           className={`flex items-center gap-1 text-xs transition-colors ${
             c.user_reaction === "like"
-              ? "text-green-400"
-              : "text-fg-muted hover:text-green-400"
+              ? "text-emerald-400"
+              : "text-fg-muted hover:text-emerald-400"
           } ${!userId ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
         >
-          <svg className="w-4 h-4" fill={c.user_reaction === "like" ? "currentColor" : "none"} viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M6.633 10.25c.806 0 1.533-.446 2.031-1.08a9.041 9.041 0 012.861-2.4c.723-.384 1.35-.956 1.653-1.715a4.498 4.498 0 00.322-1.672V3a.75.75 0 01.75-.75 2.25 2.25 0 012.25 2.25c0 1.152-.26 2.243-.723 3.218-.266.558.107 1.282.725 1.282m0 0h3.126c1.026 0 1.945.694 2.054 1.715.045.422.068.85.068 1.285a11.95 11.95 0 01-2.649 7.521c-.388.482-.987.729-1.605.729H13.48c-.483 0-.964-.078-1.423-.23l-3.114-1.04a4.501 4.501 0 00-1.423-.23H5.904m7.723 2.01l-.102.021c-1.126.211-2.281.3-3.441.263-.297-.009-.574-.157-.752-.39l-.86-1.132a10.959 10.959 0 01-1.952-4.762L5.904 10.25" />
+          <svg className="w-4 h-4" viewBox="0 0 24 24" fill={c.user_reaction === "like" ? "currentColor" : "none"} stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 15.75l7.5-7.5 7.5 7.5" />
           </svg>
           {c.likes > 0 && <span>{c.likes}</span>}
         </button>
 
-        {/* Dislike */}
+        {/* Dislike (arrow down) */}
         <button
           onClick={() => handleReaction(c.id, "dislike")}
           disabled={!userId}
           className={`flex items-center gap-1 text-xs transition-colors ${
             c.user_reaction === "dislike"
-              ? "text-red-400"
-              : "text-fg-muted hover:text-red-400"
+              ? "text-rose-400"
+              : "text-fg-muted hover:text-rose-400"
           } ${!userId ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
         >
-          <svg className="w-4 h-4" fill={c.user_reaction === "dislike" ? "currentColor" : "none"} viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M7.498 15.25H4.372c-1.026 0-1.945-.694-2.054-1.715A12.137 12.137 0 012.25 12.25c0-2.632.851-5.09 2.649-7.521.388-.482.987-.729 1.605-.729h3.893c.483 0 .964.078 1.423.23l3.114 1.04c.459.153.94.23 1.423.23h1.294c.806 0 1.533.446 2.031 1.08a9.041 9.041 0 012.861 2.4c.723.384 1.35.956 1.653 1.715.193.481.322 1.068.322 1.672v.383a.75.75 0 01-.75.75 2.25 2.25 0 01-2.25-2.25c0-1.152.26-2.243.723-3.218.266-.558-.107-1.282-.725-1.282m0 0H7.498m7.723-2.01l.102-.021c1.126-.211 2.281-.3 3.441-.263.297.009.574.157.752.39l.86 1.132a10.959 10.959 0 011.952 4.762l.565 1.91" />
+          <svg className="w-4 h-4" viewBox="0 0 24 24" fill={c.user_reaction === "dislike" ? "currentColor" : "none"} stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
           </svg>
           {c.dislikes > 0 && <span>{c.dislikes}</span>}
         </button>
 
-        {/* Reply button (only for top-level) */}
-        {!isReply && userId && (
+        {/* Reply button (on any comment) */}
+        {userId && (
           <button
             onClick={() => { setReplyingTo(replyingTo === c.id ? null : c.id); setReplyBody(""); setReplyError(""); }}
             className="text-xs text-fg-muted hover:text-accent transition-colors cursor-pointer flex items-center gap-1"
@@ -268,11 +272,12 @@ export default function CommentSection({ chapterId, userId }: Props) {
       {/* Nested Replies */}
       {c.replies && c.replies.length > 0 && (
         <div className="mt-3 space-y-2">
-          {c.replies.map((reply) => renderComment(reply, true))}
+          {c.replies.map((reply) => renderComment(reply, depth + 1))}
         </div>
       )}
     </motion.div>
-  );
+    );
+  };
 
   return (
     <div className="mt-14">
