@@ -6,6 +6,7 @@ import Turnstile from "react-turnstile";
 import {
   getChapterComments,
   submitComment,
+  toggleCommentReaction,
   type CommentRow,
 } from "@/app/read/actions";
 
@@ -21,7 +22,13 @@ export default function CommentSection({ chapterId, userId }: Props) {
   const [error, setError] = useState("");
   const [isPending, startTransition] = useTransition();
   const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
-  const [turnstileKey, setTurnstileKey] = useState(0); // bump to force re-render / reset
+  const [turnstileKey, setTurnstileKey] = useState(0);
+  const [replyingTo, setReplyingTo] = useState<string | null>(null);
+  const [replyBody, setReplyBody] = useState("");
+  const [replyError, setReplyError] = useState("");
+  const [replyPending, setReplyPending] = useState(false);
+  const [replyTurnstileToken, setReplyTurnstileToken] = useState<string | null>(null);
+  const [replyTurnstileKey, setReplyTurnstileKey] = useState(0);
 
   const siteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY ?? "";
 
@@ -46,7 +53,6 @@ export default function CommentSection({ chapterId, userId }: Props) {
       const res = await submitComment(chapterId, body.trim(), turnstileToken);
       if (res.error) {
         setError(res.error);
-        // Reset turnstile so user can retry
         setTurnstileKey((k) => k + 1);
         setTurnstileToken(null);
         return;
@@ -57,6 +63,53 @@ export default function CommentSection({ chapterId, userId }: Props) {
       loadComments();
     });
   };
+
+  const handleReplySubmit = async (parentId: string) => {
+    setReplyError("");
+    if (!userId) { setReplyError("You must be logged in."); return; }
+    if (!replyBody.trim()) { setReplyError("Reply cannot be empty."); return; }
+    if (!replyTurnstileToken) { setReplyError("Please complete the captcha."); return; }
+
+    setReplyPending(true);
+    const res = await submitComment(chapterId, replyBody.trim(), replyTurnstileToken, parentId);
+    if (res.error) {
+      setReplyError(res.error);
+      setReplyTurnstileKey((k) => k + 1);
+      setReplyTurnstileToken(null);
+      setReplyPending(false);
+      return;
+    }
+    setReplyBody("");
+    setReplyTurnstileToken(null);
+    setReplyTurnstileKey((k) => k + 1);
+    setReplyingTo(null);
+    setReplyPending(false);
+    loadComments();
+  };
+
+  const handleReaction = async (commentId: string, type: "like" | "dislike") => {
+    if (!userId) return;
+    const res = await toggleCommentReaction(commentId, type);
+    if (res.error) return;
+    // Update local state
+    setComments((prev) => updateReactionInTree(prev, commentId, res));
+  };
+
+  function updateReactionInTree(
+    list: CommentRow[],
+    commentId: string,
+    res: { likes?: number; dislikes?: number; user_reaction?: "like" | "dislike" | null }
+  ): CommentRow[] {
+    return list.map((c) => {
+      if (c.id === commentId) {
+        return { ...c, likes: res.likes ?? c.likes, dislikes: res.dislikes ?? c.dislikes, user_reaction: res.user_reaction ?? null };
+      }
+      if (c.replies?.length) {
+        return { ...c, replies: updateReactionInTree(c.replies, commentId, res) };
+      }
+      return c;
+    });
+  }
 
   const formatDate = (date: string) => {
     const d = new Date(date);
@@ -80,6 +133,146 @@ export default function CommentSection({ chapterId, userId }: Props) {
   const getDisplayName = (c: CommentRow) => {
     return c.users_profile?.display_name || c.users_profile?.email?.split("@")[0] || "Anonymous";
   };
+
+  const renderComment = (c: CommentRow, isReply = false) => (
+    <motion.div
+      key={c.id}
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.3 }}
+      className={`bg-surface border border-border rounded-xl p-4 ${isReply ? "ml-8 sm:ml-12 border-l-2 border-l-accent/30" : ""}`}
+    >
+      {/* Header */}
+      <div className="flex items-center gap-3 mb-2">
+        {c.users_profile?.avatar_url ? (
+          <img
+            src={c.users_profile.avatar_url}
+            alt=""
+            className="w-8 h-8 rounded-full object-cover border border-border"
+          />
+        ) : (
+          <div className="w-8 h-8 rounded-full bg-accent/15 border border-accent/20 flex items-center justify-center text-xs font-bold text-accent">
+            {getInitial(c)}
+          </div>
+        )}
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="text-sm font-semibold text-fg truncate">
+            {getDisplayName(c)}
+          </span>
+          <span className="text-xs text-fg-muted flex-shrink-0">
+            {formatDate(c.created_at)}
+          </span>
+        </div>
+      </div>
+
+      {/* Body */}
+      <p className="text-sm text-fg/90 leading-relaxed whitespace-pre-wrap break-words">
+        {c.body}
+      </p>
+
+      {/* Actions: Like / Dislike / Reply */}
+      <div className="flex items-center gap-4 mt-3">
+        {/* Like */}
+        <button
+          onClick={() => handleReaction(c.id, "like")}
+          disabled={!userId}
+          className={`flex items-center gap-1 text-xs transition-colors ${
+            c.user_reaction === "like"
+              ? "text-green-400"
+              : "text-fg-muted hover:text-green-400"
+          } ${!userId ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
+        >
+          <svg className="w-4 h-4" fill={c.user_reaction === "like" ? "currentColor" : "none"} viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M6.633 10.25c.806 0 1.533-.446 2.031-1.08a9.041 9.041 0 012.861-2.4c.723-.384 1.35-.956 1.653-1.715a4.498 4.498 0 00.322-1.672V3a.75.75 0 01.75-.75 2.25 2.25 0 012.25 2.25c0 1.152-.26 2.243-.723 3.218-.266.558.107 1.282.725 1.282m0 0h3.126c1.026 0 1.945.694 2.054 1.715.045.422.068.85.068 1.285a11.95 11.95 0 01-2.649 7.521c-.388.482-.987.729-1.605.729H13.48c-.483 0-.964-.078-1.423-.23l-3.114-1.04a4.501 4.501 0 00-1.423-.23H5.904m7.723 2.01l-.102.021c-1.126.211-2.281.3-3.441.263-.297-.009-.574-.157-.752-.39l-.86-1.132a10.959 10.959 0 01-1.952-4.762L5.904 10.25" />
+          </svg>
+          {c.likes > 0 && <span>{c.likes}</span>}
+        </button>
+
+        {/* Dislike */}
+        <button
+          onClick={() => handleReaction(c.id, "dislike")}
+          disabled={!userId}
+          className={`flex items-center gap-1 text-xs transition-colors ${
+            c.user_reaction === "dislike"
+              ? "text-red-400"
+              : "text-fg-muted hover:text-red-400"
+          } ${!userId ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
+        >
+          <svg className="w-4 h-4" fill={c.user_reaction === "dislike" ? "currentColor" : "none"} viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M7.498 15.25H4.372c-1.026 0-1.945-.694-2.054-1.715A12.137 12.137 0 012.25 12.25c0-2.632.851-5.09 2.649-7.521.388-.482.987-.729 1.605-.729h3.893c.483 0 .964.078 1.423.23l3.114 1.04c.459.153.94.23 1.423.23h1.294c.806 0 1.533.446 2.031 1.08a9.041 9.041 0 012.861 2.4c.723.384 1.35.956 1.653 1.715.193.481.322 1.068.322 1.672v.383a.75.75 0 01-.75.75 2.25 2.25 0 01-2.25-2.25c0-1.152.26-2.243.723-3.218.266-.558-.107-1.282-.725-1.282m0 0H7.498m7.723-2.01l.102-.021c1.126-.211 2.281-.3 3.441-.263.297.009.574.157.752.39l.86 1.132a10.959 10.959 0 011.952 4.762l.565 1.91" />
+          </svg>
+          {c.dislikes > 0 && <span>{c.dislikes}</span>}
+        </button>
+
+        {/* Reply button (only for top-level) */}
+        {!isReply && userId && (
+          <button
+            onClick={() => { setReplyingTo(replyingTo === c.id ? null : c.id); setReplyBody(""); setReplyError(""); }}
+            className="text-xs text-fg-muted hover:text-accent transition-colors cursor-pointer flex items-center gap-1"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 15L3 9m0 0l6-6M3 9h12a6 6 0 010 12h-3" />
+            </svg>
+            Reply
+          </button>
+        )}
+      </div>
+
+      {/* Reply Form (inline) */}
+      {replyingTo === c.id && (
+        <motion.div
+          initial={{ opacity: 0, height: 0 }}
+          animate={{ opacity: 1, height: "auto" }}
+          exit={{ opacity: 0, height: 0 }}
+          className="mt-3 ml-2"
+        >
+          <textarea
+            value={replyBody}
+            onChange={(e) => setReplyBody(e.target.value)}
+            placeholder={`Reply to ${getDisplayName(c)}…`}
+            maxLength={2000}
+            rows={2}
+            className="w-full bg-bg border border-border rounded-lg px-3 py-2 text-fg text-sm resize-none focus:border-accent/50 focus:outline-none placeholder:text-fg-muted/50"
+          />
+          <div className="flex items-end justify-between gap-3 mt-2">
+            <div className="flex-shrink-0">
+              <Turnstile
+                key={replyTurnstileKey}
+                sitekey={siteKey}
+                onVerify={(token: string) => setReplyTurnstileToken(token)}
+                onExpire={() => setReplyTurnstileToken(null)}
+                theme="dark"
+                size="compact"
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => { setReplyingTo(null); setReplyBody(""); setReplyError(""); }}
+                className="px-3 py-1.5 rounded-lg text-fg-muted text-xs hover:text-fg transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => handleReplySubmit(c.id)}
+                disabled={replyPending || !replyBody.trim() || !replyTurnstileToken}
+                className="px-3 py-1.5 rounded-lg bg-accent hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-medium transition-colors"
+              >
+                {replyPending ? "Posting…" : "Reply"}
+              </button>
+            </div>
+          </div>
+          {replyError && <p className="mt-1 text-xs text-red-400">{replyError}</p>}
+        </motion.div>
+      )}
+
+      {/* Nested Replies */}
+      {c.replies && c.replies.length > 0 && (
+        <div className="mt-3 space-y-2">
+          {c.replies.map((reply) => renderComment(reply, true))}
+        </div>
+      )}
+    </motion.div>
+  );
 
   return (
     <div className="mt-14">
@@ -172,41 +365,7 @@ export default function CommentSection({ chapterId, userId }: Props) {
       ) : (
         <div className="space-y-3">
           <AnimatePresence initial={false}>
-            {comments.map((c, i) => (
-              <motion.div
-                key={c.id}
-                initial={{ opacity: 0, y: 12 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.3, delay: i * 0.05 }}
-                className="bg-surface border border-border rounded-xl p-4"
-              >
-                <div className="flex items-center gap-3 mb-2">
-                  {/* Avatar */}
-                  {c.users_profile?.avatar_url ? (
-                    <img
-                      src={c.users_profile.avatar_url}
-                      alt=""
-                      className="w-8 h-8 rounded-full object-cover border border-border"
-                    />
-                  ) : (
-                    <div className="w-8 h-8 rounded-full bg-accent/15 border border-accent/20 flex items-center justify-center text-xs font-bold text-accent">
-                      {getInitial(c)}
-                    </div>
-                  )}
-                  <div className="flex items-center gap-2 min-w-0">
-                    <span className="text-sm font-semibold text-fg truncate">
-                      {getDisplayName(c)}
-                    </span>
-                    <span className="text-xs text-fg-muted flex-shrink-0">
-                      {formatDate(c.created_at)}
-                    </span>
-                  </div>
-                </div>
-                <p className="text-sm text-fg/90 leading-relaxed whitespace-pre-wrap break-words">
-                  {c.body}
-                </p>
-              </motion.div>
-            ))}
+            {comments.map((c) => renderComment(c))}
           </AnimatePresence>
         </div>
       )}

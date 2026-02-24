@@ -46,19 +46,24 @@ export interface CommentRow {
   body: string;
   created_at: string;
   user_id: string;
+  parent_id: string | null;
+  likes: number;
+  dislikes: number;
+  user_reaction: "like" | "dislike" | null;
   users_profile: {
     id: string;
     display_name: string | null;
     email: string;
     avatar_url: string | null;
   };
+  replies?: CommentRow[];
 }
 
 export async function getChapterComments(chapterId: string): Promise<CommentRow[]> {
-  const supabase = await createClient();
+  const { supabase, user } = await getUser();
   const { data, error } = await supabase
     .from("comments")
-    .select("id, body, created_at, user_id, users_profile(id, display_name, email, avatar_url)")
+    .select("id, body, created_at, user_id, parent_id, users_profile(id, display_name, email, avatar_url)")
     .eq("chapter_id", chapterId)
     .eq("is_deleted", false)
     .order("created_at", { ascending: true });
@@ -67,13 +72,71 @@ export async function getChapterComments(chapterId: string): Promise<CommentRow[
     console.error("getChapterComments:", error.message);
     return [];
   }
-  return (data as unknown as CommentRow[]) || [];
+
+  const raw = (data as unknown as any[]) || [];
+
+  // Fetch reaction counts for all comment IDs
+  const commentIds = raw.map((c) => c.id);
+  let reactionCounts: Record<string, { likes: number; dislikes: number }> = {};
+  let userReactions: Record<string, "like" | "dislike"> = {};
+
+  if (commentIds.length > 0) {
+    const { data: reactions } = await supabase
+      .from("comment_reactions")
+      .select("comment_id, reaction_type")
+      .in("comment_id", commentIds);
+
+    for (const r of reactions || []) {
+      if (!reactionCounts[r.comment_id]) reactionCounts[r.comment_id] = { likes: 0, dislikes: 0 };
+      if (r.reaction_type === "like") reactionCounts[r.comment_id].likes++;
+      else reactionCounts[r.comment_id].dislikes++;
+    }
+
+    if (user) {
+      const { data: myReactions } = await supabase
+        .from("comment_reactions")
+        .select("comment_id, reaction_type")
+        .in("comment_id", commentIds)
+        .eq("user_id", user.id);
+
+      for (const r of myReactions || []) {
+        userReactions[r.comment_id] = r.reaction_type as "like" | "dislike";
+      }
+    }
+  }
+
+  const enriched: CommentRow[] = raw.map((c) => ({
+    ...c,
+    likes: reactionCounts[c.id]?.likes ?? 0,
+    dislikes: reactionCounts[c.id]?.dislikes ?? 0,
+    user_reaction: userReactions[c.id] ?? null,
+  }));
+
+  // Build tree: top-level comments + nested replies
+  const topLevel: CommentRow[] = [];
+  const replyMap: Record<string, CommentRow[]> = {};
+
+  for (const c of enriched) {
+    if (c.parent_id) {
+      if (!replyMap[c.parent_id]) replyMap[c.parent_id] = [];
+      replyMap[c.parent_id].push(c);
+    } else {
+      topLevel.push(c);
+    }
+  }
+
+  for (const c of topLevel) {
+    c.replies = replyMap[c.id] || [];
+  }
+
+  return topLevel;
 }
 
 export async function submitComment(
   chapterId: string,
   body: string,
-  turnstileToken: string
+  turnstileToken: string,
+  parentId?: string | null
 ): Promise<{ error?: string; success?: boolean }> {
   // 1. Verify Turnstile
   const valid = await verifyTurnstile(turnstileToken);
@@ -109,10 +172,67 @@ export async function submitComment(
     user_id: user.id,
     body: trimmed,
     ip_address: ip,
+    parent_id: parentId || null,
   });
 
   if (error) return { error: error.message };
   return { success: true };
+}
+
+// ── Comment Reactions ────────────────────────────────────────
+
+export async function toggleCommentReaction(
+  commentId: string,
+  reactionType: "like" | "dislike"
+): Promise<{ error?: string; likes?: number; dislikes?: number; user_reaction?: "like" | "dislike" | null }> {
+  const { supabase, user } = await getUser();
+  if (!user) return { error: "You must be logged in." };
+
+  // Check existing reaction
+  const { data: existing } = await supabase
+    .from("comment_reactions")
+    .select("id, reaction_type")
+    .eq("comment_id", commentId)
+    .eq("user_id", user.id)
+    .maybeSingle();
+
+  let newReaction: "like" | "dislike" | null = null;
+
+  if (existing) {
+    if (existing.reaction_type === reactionType) {
+      // Same reaction → remove it (toggle off)
+      await supabase.from("comment_reactions").delete().eq("id", existing.id);
+      newReaction = null;
+    } else {
+      // Different reaction → update
+      await supabase.from("comment_reactions").update({ reaction_type: reactionType }).eq("id", existing.id);
+      newReaction = reactionType;
+    }
+  } else {
+    // No reaction → insert
+    const { error: insErr } = await supabase.from("comment_reactions").insert({
+      comment_id: commentId,
+      user_id: user.id,
+      reaction_type: reactionType,
+    });
+    if (insErr) return { error: insErr.message };
+    newReaction = reactionType;
+  }
+
+  // Get updated counts
+  const { count: likes } = await supabase
+    .from("comment_reactions")
+    .select("*", { count: "exact", head: true })
+    .eq("comment_id", commentId)
+    .eq("reaction_type", "like");
+
+  const { count: dislikes } = await supabase
+    .from("comment_reactions")
+    .select("*", { count: "exact", head: true })
+    .eq("comment_id", commentId)
+    .eq("reaction_type", "dislike");
+
+  return { likes: likes ?? 0, dislikes: dislikes ?? 0, user_reaction: newReaction };
 }
 
 // ── Likes ────────────────────────────────────────────────────
