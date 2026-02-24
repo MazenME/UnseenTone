@@ -63,20 +63,31 @@ export default async function NovelPage({ params }: { params: Promise<{ slug: st
     getNovelRatingState(novel.id),
   ]);
 
-  // Aggregate chapter ratings for this novel
+  // Aggregate chapter ratings for this novel (total + per-chapter)
   const chapterIds = chapters.map((c) => c.id);
   let chapterRatingAvg = 0;
   let chapterRatingCount = 0;
+  const perChapterRating: Record<string, { avg: number; count: number }> = {};
   if (chapterIds.length > 0) {
     const { data: crRaw } = await supabase2
       .from("chapter_ratings")
-      .select("rating")
+      .select("chapter_id, rating")
       .in("chapter_id", chapterIds);
     const crAll = crRaw || [];
     chapterRatingCount = crAll.length;
     chapterRatingAvg = chapterRatingCount > 0
       ? Math.round((crAll.reduce((s, r) => s + r.rating, 0) / chapterRatingCount) * 10) / 10
       : 0;
+    // Per-chapter aggregation
+    const byChapter: Record<string, number[]> = {};
+    for (const r of crAll) {
+      if (!byChapter[r.chapter_id]) byChapter[r.chapter_id] = [];
+      byChapter[r.chapter_id].push(r.rating);
+    }
+    for (const [cid, ratings] of Object.entries(byChapter)) {
+      const avg = ratings.reduce((s, v) => s + v, 0) / ratings.length;
+      perChapterRating[cid] = { avg: Math.round(avg * 10) / 10, count: ratings.length };
+    }
   }
 
   return (
@@ -228,10 +239,22 @@ export default async function NovelPage({ params }: { params: Promise<{ slug: st
                     <h3 className="text-sm font-semibold text-fg group-hover:text-accent transition-colors truncate">
                       {chapter.title}
                     </h3>
-                    <div className="flex items-center gap-3 mt-1 text-xs text-fg-muted">
+                    <div className="flex items-center gap-3 mt-1 text-xs text-fg-muted flex-wrap">
                       <span>{chapter.word_count.toLocaleString()} words</span>
                       <span>&middot;</span>
                       <span>{chapter.reads.toLocaleString()} reads</span>
+                      {perChapterRating[chapter.id] && (
+                        <>
+                          <span>&middot;</span>
+                          <span className="flex items-center gap-0.5">
+                            <svg className="w-3 h-3 text-amber-400" fill="currentColor" viewBox="0 0 24 24">
+                              <path d="M11.48 3.499a.562.562 0 011.04 0l2.125 5.111a.563.563 0 00.475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 00-.182.557l1.285 5.385a.562.562 0 01-.84.61l-4.725-2.885a.562.562 0 00-.586 0L6.982 20.54a.562.562 0 01-.84-.61l1.285-5.386a.562.562 0 00-.182-.557l-4.204-3.602a.562.562 0 01.321-.988l5.518-.442a.563.563 0 00.475-.345L11.48 3.5z"/>
+                            </svg>
+                            <span className="text-amber-400 font-medium">{perChapterRating[chapter.id].avg.toFixed(1)}</span>/10
+                            <span className="text-fg-muted/50">({perChapterRating[chapter.id].count})</span>
+                          </span>
+                        </>
+                      )}
                       <span>&middot;</span>
                       <span>{new Date(chapter.created_at).toLocaleDateString()}</span>
                     </div>

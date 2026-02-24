@@ -28,6 +28,8 @@ export async function getComments(opts: {
   pageSize?: number;
   showDeleted?: boolean;
   search?: string;
+  novelId?: string;
+  chapterId?: string;
 }) {
   await requireAdmin();
   const admin = createAdminClient();
@@ -40,7 +42,7 @@ export async function getComments(opts: {
   let query = admin
     .from("comments")
     .select(
-      "id, body, ip_address, is_deleted, created_at, user_id, users_profile(id, display_name, email, is_banned, avatar_url), chapters(id, title, novels(title))",
+      "id, body, ip_address, is_deleted, created_at, user_id, users_profile(id, display_name, email, is_banned, avatar_url), chapters!inner(id, title, novel_id, novels(title))",
       { count: "exact" }
     )
     .order("created_at", { ascending: false })
@@ -54,10 +56,43 @@ export async function getComments(opts: {
     query = query.ilike("body", `%${opts.search}%`);
   }
 
+  if (opts.chapterId) {
+    query = query.eq("chapter_id", opts.chapterId);
+  } else if (opts.novelId) {
+    query = query.eq("chapters.novel_id", opts.novelId);
+  }
+
   const { data, count, error } = await query;
 
   if (error) return { comments: [], total: 0, error: error.message };
   return { comments: data || [], total: count || 0 };
+}
+
+// ── Fetch novels with their chapters (for filter dropdowns) ──
+export async function getNovelsWithChapters(): Promise<
+  { id: string; title: string; chapters: { id: string; title: string; chapter_number: number }[] }[]
+> {
+  await requireAdmin();
+  const admin = createAdminClient();
+
+  const { data: novels } = await admin
+    .from("novels")
+    .select("id, title")
+    .order("created_at", { ascending: false });
+
+  if (!novels || novels.length === 0) return [];
+
+  const result = [];
+  for (const n of novels) {
+    const { data: chapters } = await admin
+      .from("chapters")
+      .select("id, title, chapter_number")
+      .eq("novel_id", n.id)
+      .order("chapter_number", { ascending: true });
+    result.push({ ...n, chapters: chapters || [] });
+  }
+
+  return result;
 }
 
 // ── Delete a comment (soft-delete) ───────────────────────────

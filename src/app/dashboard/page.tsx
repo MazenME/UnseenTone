@@ -23,6 +23,8 @@ interface NovelAnalytics {
     word_count: number;
     comment_count: number;
     created_at: string;
+    avg_rating: number;
+    rating_count: number;
   }[];
 }
 
@@ -85,6 +87,21 @@ async function getAnalytics() {
     const chapterList = chapters || [];
     const totalWords = chapterList.reduce((sum, c) => sum + (c.word_count || 0), 0);
 
+    // Per-chapter rating aggregation for this novel
+    const chapterIdsList = chapterList.map((c) => c.id);
+    const perChRating: Record<string, { sum: number; count: number }> = {};
+    if (chapterIdsList.length > 0) {
+      const { data: chRatings } = await supabase
+        .from("chapter_ratings")
+        .select("chapter_id, rating")
+        .in("chapter_id", chapterIdsList);
+      for (const r of chRatings || []) {
+        if (!perChRating[r.chapter_id]) perChRating[r.chapter_id] = { sum: 0, count: 0 };
+        perChRating[r.chapter_id].sum += r.rating;
+        perChRating[r.chapter_id].count += 1;
+      }
+    }
+
     // Get per-chapter comment counts
     const chaptersWithComments = [];
     for (const ch of chapterList) {
@@ -94,9 +111,12 @@ async function getAnalytics() {
         .eq("chapter_id", ch.id)
         .eq("is_deleted", false);
 
+      const chRat = perChRating[ch.id];
       chaptersWithComments.push({
         ...ch,
         comment_count: count || 0,
+        avg_rating: chRat ? Math.round((chRat.sum / chRat.count) * 10) / 10 : 0,
+        rating_count: chRat?.count || 0,
       });
     }
 
@@ -295,6 +315,7 @@ export default async function DashboardPage() {
                           <th className="px-5 py-2.5 font-medium text-right">Reads</th>
                           <th className="px-5 py-2.5 font-medium text-right hidden sm:table-cell">Words</th>
                           <th className="px-5 py-2.5 font-medium text-right hidden sm:table-cell">Comments</th>
+                          <th className="px-5 py-2.5 font-medium text-right hidden sm:table-cell">Rating</th>
                           <th className="px-5 py-2.5 font-medium text-right hidden md:table-cell">Published</th>
                         </tr>
                       </thead>
@@ -326,6 +347,13 @@ export default async function DashboardPage() {
                               </td>
                               <td className="px-5 py-2.5 text-right text-fg-muted hidden sm:table-cell tabular-nums">
                                 {ch.comment_count}
+                              </td>
+                              <td className="px-5 py-2.5 text-right hidden sm:table-cell tabular-nums">
+                                {ch.avg_rating > 0 ? (
+                                  <span className="text-amber-400 font-medium">★ {ch.avg_rating.toFixed(1)}<span className="text-fg-muted font-normal"> ({ch.rating_count})</span></span>
+                                ) : (
+                                  <span className="text-fg-muted">—</span>
+                                )}
                               </td>
                               <td className="px-5 py-2.5 text-right text-fg-muted hidden md:table-cell">
                                 {new Date(ch.created_at).toLocaleDateString()}

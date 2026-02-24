@@ -9,6 +9,7 @@ import {
   hardDeleteComment,
   banUser,
   deleteCommentsByIp,
+  getNovelsWithChapters,
 } from "@/app/dashboard/moderation/actions";
 
 interface Comment {
@@ -32,6 +33,12 @@ interface Comment {
   } | null;
 }
 
+interface NovelWithChapters {
+  id: string;
+  title: string;
+  chapters: { id: string; title: string; chapter_number: number }[];
+}
+
 export default function CommentModeration() {
   const [comments, setComments] = useState<Comment[]>([]);
   const [total, setTotal] = useState(0);
@@ -45,16 +52,26 @@ export default function CommentModeration() {
   const [banReason, setBanReason] = useState("");
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
+  // Filter state
+  const [novels, setNovels] = useState<NovelWithChapters[]>([]);
+  const [selectedNovelId, setSelectedNovelId] = useState("");
+  const [selectedChapterId, setSelectedChapterId] = useState("");
+
   const pageSize = 15;
   const totalPages = Math.ceil(total / pageSize);
 
+  // Load novels for filter dropdowns once
+  useEffect(() => {
+    getNovelsWithChapters().then((data) => setNovels(data));
+  }, []);
+
   const fetchComments = useCallback(async () => {
     setLoading(true);
-    const result = await getComments({ page, pageSize, showDeleted, search });
+    const result = await getComments({ page, pageSize, showDeleted, search, novelId: selectedNovelId || undefined, chapterId: selectedChapterId || undefined });
     setComments(result.comments as Comment[]);
     setTotal(result.total);
     setLoading(false);
-  }, [page, pageSize, showDeleted, search]);
+  }, [page, pageSize, showDeleted, search, selectedNovelId, selectedChapterId]);
 
   useEffect(() => {
     fetchComments();
@@ -108,35 +125,92 @@ export default function CommentModeration() {
   return (
     <div className="space-y-4">
       {/* Controls Bar */}
-      <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between">
-        <form onSubmit={handleSearch} className="flex gap-2 flex-1 max-w-md">
-          <input
-            type="text"
-            value={searchInput}
-            onChange={(e) => setSearchInput(e.target.value)}
-            placeholder="Search comments..."
-            className="flex-1 bg-bg border border-border rounded-lg px-3 py-2 text-sm text-fg placeholder:text-fg-muted focus:outline-none focus:ring-2 focus:ring-accent/50"
-          />
-          <button
-            type="submit"
-            className="px-4 py-2 bg-accent hover:bg-accent-hover text-white text-sm rounded-lg transition-colors"
-          >
-            Search
-          </button>
-        </form>
+      <div className="flex flex-col gap-3">
+        {/* Row 1: Search + Show deleted */}
+        <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between">
+          <form onSubmit={handleSearch} className="flex gap-2 flex-1 max-w-md">
+            <input
+              type="text"
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              placeholder="Search comments..."
+              className="flex-1 bg-bg border border-border rounded-lg px-3 py-2 text-sm text-fg placeholder:text-fg-muted focus:outline-none focus:ring-2 focus:ring-accent/50"
+            />
+            <button
+              type="submit"
+              className="px-4 py-2 bg-accent hover:bg-accent-hover text-white text-sm rounded-lg transition-colors"
+            >
+              Search
+            </button>
+          </form>
 
-        <label className="flex items-center gap-2 text-sm text-fg-muted cursor-pointer select-none">
-          <input
-            type="checkbox"
-            checked={showDeleted}
+          <label className="flex items-center gap-2 text-sm text-fg-muted cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={showDeleted}
+              onChange={(e) => {
+                setShowDeleted(e.target.checked);
+                setPage(1);
+              }}
+              className="rounded border-border accent-accent"
+            />
+            Show deleted
+          </label>
+        </div>
+
+        {/* Row 2: Novel + Chapter filters */}
+        <div className="flex flex-wrap gap-3 items-center">
+          <select
+            value={selectedNovelId}
             onChange={(e) => {
-              setShowDeleted(e.target.checked);
+              setSelectedNovelId(e.target.value);
+              setSelectedChapterId("");
               setPage(1);
             }}
-            className="rounded border-border accent-accent"
-          />
-          Show deleted
-        </label>
+            className="bg-bg border border-border rounded-lg px-3 py-2 text-sm text-fg focus:outline-none focus:ring-2 focus:ring-accent/50 min-w-[180px]"
+          >
+            <option value="">All Novels</option>
+            {novels.map((n) => (
+              <option key={n.id} value={n.id}>
+                {n.title}
+              </option>
+            ))}
+          </select>
+
+          {selectedNovelId && (() => {
+            const selectedNovel = novels.find((n) => n.id === selectedNovelId);
+            return selectedNovel && selectedNovel.chapters.length > 0 ? (
+              <select
+                value={selectedChapterId}
+                onChange={(e) => {
+                  setSelectedChapterId(e.target.value);
+                  setPage(1);
+                }}
+                className="bg-bg border border-border rounded-lg px-3 py-2 text-sm text-fg focus:outline-none focus:ring-2 focus:ring-accent/50 min-w-[200px]"
+              >
+                <option value="">All Chapters</option>
+                {selectedNovel.chapters.map((ch) => (
+                  <option key={ch.id} value={ch.id}>
+                    Ch. {ch.chapter_number}: {ch.title}
+                  </option>
+                ))}
+              </select>
+            ) : null;
+          })()}
+
+          {(selectedNovelId || selectedChapterId) && (
+            <button
+              onClick={() => {
+                setSelectedNovelId("");
+                setSelectedChapterId("");
+                setPage(1);
+              }}
+              className="text-xs text-fg-muted hover:text-accent transition-colors underline"
+            >
+              Clear filters
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Stats */}
