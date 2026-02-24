@@ -362,3 +362,74 @@ export async function toggleBookmark(
 
   return { bookmarked: !existing };
 }
+
+// ── Chapter Ratings ──────────────────────────────────────────
+
+export async function getChapterRatingState(
+  chapterId: string
+): Promise<{ average: number; count: number; userRating: number | null }> {
+  const { supabase, user } = await getUser();
+
+  const { data: ratings } = await supabase
+    .from("chapter_ratings")
+    .select("rating")
+    .eq("chapter_id", chapterId);
+
+  const all = ratings || [];
+  const count = all.length;
+  const average = count > 0 ? all.reduce((s, r) => s + r.rating, 0) / count : 0;
+
+  let userRating: number | null = null;
+  if (user) {
+    const { data } = await supabase
+      .from("chapter_ratings")
+      .select("rating")
+      .eq("chapter_id", chapterId)
+      .eq("user_id", user.id)
+      .maybeSingle();
+    userRating = data?.rating ?? null;
+  }
+
+  return { average: Math.round(average * 10) / 10, count, userRating };
+}
+
+export async function rateChapter(
+  chapterId: string,
+  rating: number
+): Promise<{ error?: string; average?: number; count?: number; userRating?: number }> {
+  const { supabase, user } = await getUser();
+  if (!user) return { error: "You must be logged in to rate." };
+  if (rating < 1 || rating > 10) return { error: "Rating must be between 1 and 10." };
+
+  const { data: existing } = await supabase
+    .from("chapter_ratings")
+    .select("id")
+    .eq("chapter_id", chapterId)
+    .eq("user_id", user.id)
+    .maybeSingle();
+
+  if (existing) {
+    const { error } = await supabase
+      .from("chapter_ratings")
+      .update({ rating, updated_at: new Date().toISOString() })
+      .eq("id", existing.id);
+    if (error) return { error: error.message };
+  } else {
+    const { error } = await supabase.from("chapter_ratings").insert({
+      chapter_id: chapterId,
+      user_id: user.id,
+      rating,
+    });
+    if (error) return { error: error.message };
+  }
+
+  // Return updated stats
+  const { data: all } = await supabase
+    .from("chapter_ratings")
+    .select("rating")
+    .eq("chapter_id", chapterId);
+
+  const list = all || [];
+  const avg = list.length > 0 ? list.reduce((s, r) => s + r.rating, 0) / list.length : 0;
+  return { average: Math.round(avg * 10) / 10, count: list.length, userRating: rating };
+}

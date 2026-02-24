@@ -76,3 +76,79 @@ export async function toggleNovelFavourite(
 
   return { favourited: !existing, count: count ?? 0 };
 }
+
+// ── Novel Ratings ────────────────────────────────────────────
+
+export async function getNovelRatingState(
+  novelId: string
+): Promise<{ average: number; count: number; userRating: number | null }> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  const { data: ratings } = await supabase
+    .from("novel_ratings")
+    .select("rating")
+    .eq("novel_id", novelId);
+
+  const all = ratings || [];
+  const count = all.length;
+  const average = count > 0 ? all.reduce((s, r) => s + r.rating, 0) / count : 0;
+
+  let userRating: number | null = null;
+  if (user) {
+    const { data } = await supabase
+      .from("novel_ratings")
+      .select("rating")
+      .eq("novel_id", novelId)
+      .eq("user_id", user.id)
+      .maybeSingle();
+    userRating = data?.rating ?? null;
+  }
+
+  return { average: Math.round(average * 10) / 10, count, userRating };
+}
+
+export async function rateNovel(
+  novelId: string,
+  rating: number
+): Promise<{ error?: string; average?: number; count?: number; userRating?: number }> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { error: "You must be logged in to rate." };
+  if (rating < 1 || rating > 10) return { error: "Rating must be between 1 and 10." };
+
+  const { data: existing } = await supabase
+    .from("novel_ratings")
+    .select("id")
+    .eq("novel_id", novelId)
+    .eq("user_id", user.id)
+    .maybeSingle();
+
+  if (existing) {
+    const { error } = await supabase
+      .from("novel_ratings")
+      .update({ rating, updated_at: new Date().toISOString() })
+      .eq("id", existing.id);
+    if (error) return { error: error.message };
+  } else {
+    const { error } = await supabase.from("novel_ratings").insert({
+      novel_id: novelId,
+      user_id: user.id,
+      rating,
+    });
+    if (error) return { error: error.message };
+  }
+
+  const { data: all } = await supabase
+    .from("novel_ratings")
+    .select("rating")
+    .eq("novel_id", novelId);
+
+  const list = all || [];
+  const avg = list.length > 0 ? list.reduce((s, r) => s + r.rating, 0) / list.length : 0;
+  return { average: Math.round(avg * 10) / 10, count: list.length, userRating: rating };
+}

@@ -1,7 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { notFound } from "next/navigation";
 import ChapterReaderClient from "@/components/chapter-reader-client";
-import { getChapterLikeState, getBookmarkState } from "@/app/read/actions";
+import { getChapterLikeState, getBookmarkState, getChapterRatingState } from "@/app/read/actions";
 
 interface Chapter {
   id: string;
@@ -88,9 +88,10 @@ export default async function ReadChapterPage({ params }: { params: Promise<{ ch
   const { data: { user } } = await supabase.auth.getUser();
   const userId = user?.id ?? null;
 
-  const [likeState, bookmarkState] = await Promise.all([
+  const [likeState, bookmarkState, ratingState] = await Promise.all([
     getChapterLikeState(chapterId),
     getBookmarkState(chapterId),
+    getChapterRatingState(chapterId),
   ]);
 
   return (
@@ -103,6 +104,9 @@ export default async function ReadChapterPage({ params }: { params: Promise<{ ch
       initialLikeCount={likeState.count}
       initialLiked={likeState.liked}
       initialBookmarked={bookmarkState.bookmarked}
+      initialRatingAverage={ratingState.average}
+      initialRatingCount={ratingState.count}
+      initialUserRating={ratingState.userRating}
     />
   );
 }

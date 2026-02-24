@@ -7,6 +7,8 @@ import ReaderControls, { useReaderSettings } from "@/components/reader-controls"
 import CommentSection from "@/components/comment-section";
 import LikeButton from "@/components/like-button";
 import BookmarkButton from "@/components/bookmark-button";
+import RatingStars from "@/components/rating-stars";
+import { rateChapter } from "@/app/read/actions";
 import { useState, useEffect } from "react";
 
 interface Chapter {
@@ -41,9 +43,12 @@ interface Props {
   initialLikeCount: number;
   initialLiked: boolean;
   initialBookmarked: boolean;
+  initialRatingAverage: number;
+  initialRatingCount: number;
+  initialUserRating: number | null;
 }
 
-export default function ChapterReaderClient({ chapter, novel, prevChapter, nextChapter, userId, initialLikeCount, initialLiked, initialBookmarked }: Props) {
+export default function ChapterReaderClient({ chapter, novel, prevChapter, nextChapter, userId, initialLikeCount, initialLiked, initialBookmarked, initialRatingAverage, initialRatingCount, initialUserRating }: Props) {
   const { settings, updateSettings, resetSettings, mounted } = useReaderSettings();
   const [showTopBar, setShowTopBar] = useState(true);
   const [lastScrollY, setLastScrollY] = useState(0);
@@ -187,7 +192,7 @@ export default function ChapterReaderClient({ chapter, novel, prevChapter, nextC
           </div>
 
           {/* Like & Bookmark */}
-          <div className="flex items-center justify-center gap-3 mb-10">
+          <div className="flex items-center justify-center gap-3 mb-6">
             <LikeButton
               chapterId={chapter.id}
               initialCount={initialLikeCount}
@@ -198,6 +203,20 @@ export default function ChapterReaderClient({ chapter, novel, prevChapter, nextC
               chapterId={chapter.id}
               initialBookmarked={initialBookmarked}
               userId={userId}
+            />
+          </div>
+
+          {/* Chapter Rating */}
+          <div className="flex flex-col items-center gap-2 mb-10">
+            <span className="text-xs text-fg-muted uppercase tracking-wider">Rate this chapter</span>
+            <RatingStars
+              type="chapter"
+              targetId={chapter.id}
+              userId={userId}
+              initialAverage={initialRatingAverage}
+              initialCount={initialRatingCount}
+              initialUserRating={initialUserRating}
+              onRate={rateChapter}
             />
           </div>
 

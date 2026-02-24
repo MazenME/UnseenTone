@@ -3,7 +3,8 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import Navbar from "@/components/navbar";
 import NovelFavouriteButton from "@/components/novel-favourite-button";
-import { getNovelFavouriteState } from "@/app/novel/actions";
+import NovelRating from "@/components/novel-rating";
+import { getNovelFavouriteState, getNovelRatingState } from "@/app/novel/actions";
 
 interface Chapter {
   id: string;
@@ -57,7 +58,10 @@ export default async function NovelPage({ params }: { params: Promise<{ slug: st
   const supabase2 = await createClient();
   const { data: { user } } = await supabase2.auth.getUser();
   const userId = user?.id ?? null;
-  const { favourited, count } = await getNovelFavouriteState(novel.id);
+  const [{ favourited, count }, ratingState] = await Promise.all([
+    getNovelFavouriteState(novel.id),
+    getNovelRatingState(novel.id),
+  ]);
 
   return (
     <>
@@ -154,6 +158,15 @@ export default async function NovelPage({ params }: { params: Promise<{ slug: st
                     initialCount={count}
                   />
                 </div>
+
+                {/* Novel Rating */}
+                <NovelRating
+                  novelId={novel.id}
+                  userId={userId}
+                  initialAverage={ratingState.average}
+                  initialCount={ratingState.count}
+                  initialUserRating={ratingState.userRating}
+                />
               </div>
             </div>
           </div>
