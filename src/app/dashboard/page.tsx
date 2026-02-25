@@ -31,25 +31,32 @@ interface NovelAnalytics {
 async function getAnalytics() {
   const supabase = await createClient();
 
+  // ─── Phase 1: ALL independent queries in parallel (7 queries) ───
   const [
     { count: totalUsers },
     { data: novels },
     { count: totalComments },
     { data: bannedUsersData },
     { data: allNovelRatings },
-    { data: allChapterRatings },
+    { data: allChapterRatingsRaw },
+    { data: allChapters },
   ] = await Promise.all([
     supabase.from("users_profile").select("*", { count: "exact", head: true }),
     supabase.from("novels").select("id, title, slug, status, total_reads, created_at, cover_url"),
     supabase.from("comments").select("*", { count: "exact", head: true }).eq("is_deleted", false),
     supabase.from("users_profile").select("*", { count: "exact", head: true }).eq("is_banned", true),
     supabase.from("novel_ratings").select("novel_id, rating"),
-    supabase.from("chapter_ratings").select("rating, chapters(novel_id)"),
+    supabase.from("chapter_ratings").select("chapter_id, rating, chapters(novel_id)"),
+    supabase
+      .from("chapters")
+      .select("id, novel_id, chapter_number, title, reads, word_count, created_at")
+      .eq("is_published", true)
+      .order("chapter_number", { ascending: true }),
   ]);
 
   const totalReads = (novels || []).reduce((sum, n) => sum + (n.total_reads || 0), 0);
 
-  // Aggregate novel ratings by novel
+  // ─── Aggregate novel ratings by novel ─────────────────────────
   const nrMap: Record<string, { sum: number; count: number }> = {};
   for (const r of (allNovelRatings || []) as any[]) {
     if (!nrMap[r.novel_id]) nrMap[r.novel_id] = { sum: 0, count: 0 };
@@ -57,81 +64,74 @@ async function getAnalytics() {
     nrMap[r.novel_id].count += 1;
   }
 
-  // Aggregate chapter ratings by novel
-  const crMap: Record<string, { sum: number; count: number }> = {};
-  for (const r of (allChapterRatings || []) as any[]) {
+  // ─── Aggregate chapter ratings by novel AND by chapter ────────
+  const crByNovel: Record<string, { sum: number; count: number }> = {};
+  const crByChapter: Record<string, { sum: number; count: number }> = {};
+  for (const r of (allChapterRatingsRaw || []) as any[]) {
     const nid = r.chapters?.novel_id;
-    if (!nid) continue;
-    if (!crMap[nid]) crMap[nid] = { sum: 0, count: 0 };
-    crMap[nid].sum += r.rating;
-    crMap[nid].count += 1;
+    if (nid) {
+      if (!crByNovel[nid]) crByNovel[nid] = { sum: 0, count: 0 };
+      crByNovel[nid].sum += r.rating;
+      crByNovel[nid].count += 1;
+    }
+    if (!crByChapter[r.chapter_id]) crByChapter[r.chapter_id] = { sum: 0, count: 0 };
+    crByChapter[r.chapter_id].sum += r.rating;
+    crByChapter[r.chapter_id].count += 1;
   }
 
-  // Get per-novel detailed analytics
-  const novelAnalytics: NovelAnalytics[] = [];
+  // ─── Group chapters by novel ──────────────────────────────────
+  const chaptersByNovel: Record<string, any[]> = {};
+  for (const ch of allChapters || []) {
+    if (!chaptersByNovel[ch.novel_id]) chaptersByNovel[ch.novel_id] = [];
+    chaptersByNovel[ch.novel_id].push(ch);
+  }
 
-  for (const novel of novels || []) {
-    const [{ data: chapters }, { count: novelCommentCount }] = await Promise.all([
-      supabase
-        .from("chapters")
-        .select("id, chapter_number, title, reads, word_count, created_at")
-        .eq("novel_id", novel.id)
-        .order("chapter_number", { ascending: true }),
-      supabase
-        .from("comments")
-        .select("*, chapters!inner(novel_id)", { count: "exact", head: true })
-        .eq("chapters.novel_id", novel.id)
-        .eq("is_deleted", false),
-    ]);
+  // ─── Phase 2: Fetch ALL comment counts in ONE query ───────────
+  const allChapterIds = (allChapters || []).map((c) => c.id);
+  const commentCountMap: Record<string, number> = {};
 
-    const chapterList = chapters || [];
-    const totalWords = chapterList.reduce((sum, c) => sum + (c.word_count || 0), 0);
+  if (allChapterIds.length > 0) {
+    const { data: allCommentRows } = await supabase
+      .from("comments")
+      .select("chapter_id")
+      .in("chapter_id", allChapterIds)
+      .eq("is_deleted", false);
 
-    // Per-chapter rating aggregation for this novel
-    const chapterIdsList = chapterList.map((c) => c.id);
-    const perChRating: Record<string, { sum: number; count: number }> = {};
-    if (chapterIdsList.length > 0) {
-      const { data: chRatings } = await supabase
-        .from("chapter_ratings")
-        .select("chapter_id, rating")
-        .in("chapter_id", chapterIdsList);
-      for (const r of chRatings || []) {
-        if (!perChRating[r.chapter_id]) perChRating[r.chapter_id] = { sum: 0, count: 0 };
-        perChRating[r.chapter_id].sum += r.rating;
-        perChRating[r.chapter_id].count += 1;
-      }
+    for (const c of allCommentRows || []) {
+      commentCountMap[c.chapter_id] = (commentCountMap[c.chapter_id] || 0) + 1;
     }
+  }
 
-    // Get per-chapter comment counts
-    const chaptersWithComments = [];
-    for (const ch of chapterList) {
-      const { count } = await supabase
-        .from("comments")
-        .select("*", { count: "exact", head: true })
-        .eq("chapter_id", ch.id)
-        .eq("is_deleted", false);
+  // ─── Build novel analytics (pure JS, no more queries) ─────────
+  const novelAnalytics: NovelAnalytics[] = (novels || []).map((novel) => {
+    const chapterList = chaptersByNovel[novel.id] || [];
+    const totalWords = chapterList.reduce((sum: number, c: any) => sum + (c.word_count || 0), 0);
 
-      const chRat = perChRating[ch.id];
-      chaptersWithComments.push({
+    let novelCommentCount = 0;
+    const chaptersWithData = chapterList.map((ch: any) => {
+      const commentCount = commentCountMap[ch.id] || 0;
+      novelCommentCount += commentCount;
+      const chRat = crByChapter[ch.id];
+      return {
         ...ch,
-        comment_count: count || 0,
+        comment_count: commentCount,
         avg_rating: chRat ? Math.round((chRat.sum / chRat.count) * 10) / 10 : 0,
         rating_count: chRat?.count || 0,
-      });
-    }
+      };
+    });
 
-    novelAnalytics.push({
+    return {
       ...novel,
       chapter_count: chapterList.length,
       total_words: totalWords,
-      total_comments: novelCommentCount || 0,
+      total_comments: novelCommentCount,
       novel_avg_rating: nrMap[novel.id] ? Math.round((nrMap[novel.id].sum / nrMap[novel.id].count) * 10) / 10 : 0,
       novel_rating_count: nrMap[novel.id]?.count || 0,
-      chapter_avg_rating: crMap[novel.id] ? Math.round((crMap[novel.id].sum / crMap[novel.id].count) * 10) / 10 : 0,
-      chapter_rating_count: crMap[novel.id]?.count || 0,
-      chapters: chaptersWithComments,
-    });
-  }
+      chapter_avg_rating: crByNovel[novel.id] ? Math.round((crByNovel[novel.id].sum / crByNovel[novel.id].count) * 10) / 10 : 0,
+      chapter_rating_count: crByNovel[novel.id]?.count || 0,
+      chapters: chaptersWithData,
+    };
+  });
 
   return {
     totalUsers: totalUsers || 0,

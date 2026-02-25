@@ -81,10 +81,20 @@ export async function getChapterComments(chapterId: string): Promise<CommentRow[
   let userReactions: Record<string, "like" | "dislike"> = {};
 
   if (commentIds.length > 0) {
-    const { data: reactions } = await supabase
-      .from("comment_reactions")
-      .select("comment_id, reaction_type")
-      .in("comment_id", commentIds);
+    // Parallelize reaction + user-reaction queries
+    const [{ data: reactions }, { data: myReactions }] = await Promise.all([
+      supabase
+        .from("comment_reactions")
+        .select("comment_id, reaction_type")
+        .in("comment_id", commentIds),
+      user
+        ? supabase
+            .from("comment_reactions")
+            .select("comment_id, reaction_type")
+            .in("comment_id", commentIds)
+            .eq("user_id", user.id)
+        : Promise.resolve({ data: null }),
+    ]);
 
     for (const r of reactions || []) {
       if (!reactionCounts[r.comment_id]) reactionCounts[r.comment_id] = { likes: 0, dislikes: 0 };
@@ -92,16 +102,8 @@ export async function getChapterComments(chapterId: string): Promise<CommentRow[
       else reactionCounts[r.comment_id].dislikes++;
     }
 
-    if (user) {
-      const { data: myReactions } = await supabase
-        .from("comment_reactions")
-        .select("comment_id, reaction_type")
-        .in("comment_id", commentIds)
-        .eq("user_id", user.id);
-
-      for (const r of myReactions || []) {
-        userReactions[r.comment_id] = r.reaction_type as "like" | "dislike";
-      }
+    for (const r of myReactions || []) {
+      userReactions[r.comment_id] = r.reaction_type as "like" | "dislike";
     }
   }
 
@@ -432,4 +434,85 @@ export async function rateChapter(
   const list = all || [];
   const avg = list.length > 0 ? list.reduce((s, r) => s + r.rating, 0) / list.length : 0;
   return { average: Math.round(avg * 10) / 10, count: list.length, userRating: rating };
+}
+
+// ── Batch interaction state (single auth, parallel queries) ──
+
+export async function getChapterInteractionState(
+  chapterId: string,
+  userId: string | null
+): Promise<{
+  likeCount: number;
+  liked: boolean;
+  bookmarked: boolean;
+  ratingAverage: number;
+  ratingCount: number;
+  userRating: number | null;
+}> {
+  const supabase = await createClient();
+
+  const queries: PromiseLike<any>[] = [
+    // 0 – like count
+    supabase
+      .from("chapter_likes")
+      .select("*", { count: "exact", head: true })
+      .eq("chapter_id", chapterId),
+    // 1 – all ratings
+    supabase
+      .from("chapter_ratings")
+      .select("rating")
+      .eq("chapter_id", chapterId),
+  ];
+
+  if (userId) {
+    // 2 – user liked?
+    queries.push(
+      supabase
+        .from("chapter_likes")
+        .select("id")
+        .eq("chapter_id", chapterId)
+        .eq("user_id", userId)
+        .maybeSingle()
+    );
+    // 3 – user bookmarked?
+    queries.push(
+      supabase
+        .from("bookmarks")
+        .select("id")
+        .eq("chapter_id", chapterId)
+        .eq("user_id", userId)
+        .maybeSingle()
+    );
+    // 4 – user rating
+    queries.push(
+      supabase
+        .from("chapter_ratings")
+        .select("rating")
+        .eq("chapter_id", chapterId)
+        .eq("user_id", userId)
+        .maybeSingle()
+    );
+  }
+
+  const results = await Promise.all(queries);
+
+  const likeCount = results[0].count ?? 0;
+  const ratings = results[1].data || [];
+  const ratingCount = ratings.length;
+  const ratingAverage =
+    ratingCount > 0
+      ? Math.round((ratings.reduce((s: number, r: any) => s + r.rating, 0) / ratingCount) * 10) / 10
+      : 0;
+
+  let liked = false;
+  let bookmarked = false;
+  let userRating: number | null = null;
+
+  if (userId) {
+    liked = !!results[2].data;
+    bookmarked = !!results[3].data;
+    userRating = results[4].data?.rating ?? null;
+  }
+
+  return { likeCount, liked, bookmarked, ratingAverage, ratingCount, userRating };
 }

@@ -4,7 +4,7 @@ import Link from "next/link";
 import Navbar from "@/components/navbar";
 import NovelFavouriteButton from "@/components/novel-favourite-button";
 import NovelRating from "@/components/novel-rating";
-import { getNovelFavouriteState, getNovelRatingState } from "@/app/novel/actions";
+import { getNovelInteractionState } from "@/app/novel/actions";
 
 interface Chapter {
   id: string;
@@ -49,45 +49,45 @@ async function getNovelBySlug(slug: string) {
 
 export default async function NovelPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
-  const result = await getNovelBySlug(slug);
+
+  // Fetch novel data + user auth in parallel (1 auth call instead of 3)
+  const supabase = await createClient();
+  const [result, { data: { user } }] = await Promise.all([
+    getNovelBySlug(slug),
+    supabase.auth.getUser(),
+  ]);
 
   if (!result) notFound();
 
   const { novel, chapters } = result;
-
-  const supabase2 = await createClient();
-  const { data: { user } } = await supabase2.auth.getUser();
   const userId = user?.id ?? null;
-  const [{ favourited, count }, ratingState] = await Promise.all([
-    getNovelFavouriteState(novel.id),
-    getNovelRatingState(novel.id),
+
+  // Fetch interaction state + chapter ratings in parallel
+  const chapterIds = chapters.map((c) => c.id);
+  const [interactionState, chapterRatingsResult] = await Promise.all([
+    getNovelInteractionState(novel.id, userId),
+    chapterIds.length > 0
+      ? supabase.from("chapter_ratings").select("chapter_id, rating").in("chapter_id", chapterIds)
+      : Promise.resolve({ data: null }),
   ]);
 
-  // Aggregate chapter ratings for this novel (total + per-chapter)
-  const chapterIds = chapters.map((c) => c.id);
-  let chapterRatingAvg = 0;
-  let chapterRatingCount = 0;
+  const { favourited, favouriteCount: count, ratingAverage, ratingCount: novelRatingCount, userRating } = interactionState;
+
+  // Aggregate chapter ratings
+  const crAll = chapterRatingsResult.data || [];
+  const chapterRatingCount = crAll.length;
+  const chapterRatingAvg = chapterRatingCount > 0
+    ? Math.round((crAll.reduce((s: number, r: any) => s + r.rating, 0) / chapterRatingCount) * 10) / 10
+    : 0;
+  const byChapter: Record<string, number[]> = {};
+  for (const r of crAll) {
+    if (!byChapter[r.chapter_id]) byChapter[r.chapter_id] = [];
+    byChapter[r.chapter_id].push(r.rating);
+  }
   const perChapterRating: Record<string, { avg: number; count: number }> = {};
-  if (chapterIds.length > 0) {
-    const { data: crRaw } = await supabase2
-      .from("chapter_ratings")
-      .select("chapter_id, rating")
-      .in("chapter_id", chapterIds);
-    const crAll = crRaw || [];
-    chapterRatingCount = crAll.length;
-    chapterRatingAvg = chapterRatingCount > 0
-      ? Math.round((crAll.reduce((s, r) => s + r.rating, 0) / chapterRatingCount) * 10) / 10
-      : 0;
-    // Per-chapter aggregation
-    const byChapter: Record<string, number[]> = {};
-    for (const r of crAll) {
-      if (!byChapter[r.chapter_id]) byChapter[r.chapter_id] = [];
-      byChapter[r.chapter_id].push(r.rating);
-    }
-    for (const [cid, ratings] of Object.entries(byChapter)) {
-      const avg = ratings.reduce((s, v) => s + v, 0) / ratings.length;
-      perChapterRating[cid] = { avg: Math.round(avg * 10) / 10, count: ratings.length };
-    }
+  for (const [cid, ratings] of Object.entries(byChapter)) {
+    const avg = ratings.reduce((s, v) => s + v, 0) / ratings.length;
+    perChapterRating[cid] = { avg: Math.round(avg * 10) / 10, count: ratings.length };
   }
 
   return (
@@ -190,9 +190,9 @@ export default async function NovelPage({ params }: { params: Promise<{ slug: st
                 <NovelRating
                   novelId={novel.id}
                   userId={userId}
-                  initialAverage={ratingState.average}
-                  initialCount={ratingState.count}
-                  initialUserRating={ratingState.userRating}
+                  initialAverage={ratingAverage}
+                  initialCount={novelRatingCount}
+                  initialUserRating={userRating}
                 />
 
                 {/* Chapter Ratings Aggregate */}

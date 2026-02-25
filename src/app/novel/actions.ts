@@ -152,3 +152,72 @@ export async function rateNovel(
   const avg = list.length > 0 ? list.reduce((s, r) => s + r.rating, 0) / list.length : 0;
   return { average: Math.round(avg * 10) / 10, count: list.length, userRating: rating };
 }
+
+// ── Batch interaction state (single client, parallel queries) ──
+
+export async function getNovelInteractionState(
+  novelId: string,
+  userId: string | null
+): Promise<{
+  favourited: boolean;
+  favouriteCount: number;
+  ratingAverage: number;
+  ratingCount: number;
+  userRating: number | null;
+}> {
+  const supabase = await createClient();
+
+  const queries: PromiseLike<any>[] = [
+    // 0 – favourite count
+    supabase
+      .from("novel_favourites")
+      .select("*", { count: "exact", head: true })
+      .eq("novel_id", novelId),
+    // 1 – all ratings
+    supabase
+      .from("novel_ratings")
+      .select("rating")
+      .eq("novel_id", novelId),
+  ];
+
+  if (userId) {
+    // 2 – user favourited?
+    queries.push(
+      supabase
+        .from("novel_favourites")
+        .select("id")
+        .eq("novel_id", novelId)
+        .eq("user_id", userId)
+        .maybeSingle()
+    );
+    // 3 – user rating
+    queries.push(
+      supabase
+        .from("novel_ratings")
+        .select("rating")
+        .eq("novel_id", novelId)
+        .eq("user_id", userId)
+        .maybeSingle()
+    );
+  }
+
+  const results = await Promise.all(queries);
+
+  const favouriteCount = results[0].count ?? 0;
+  const ratings = results[1].data || [];
+  const ratingCount = ratings.length;
+  const ratingAverage =
+    ratingCount > 0
+      ? Math.round((ratings.reduce((s: number, r: any) => s + r.rating, 0) / ratingCount) * 10) / 10
+      : 0;
+
+  let favourited = false;
+  let userRating: number | null = null;
+
+  if (userId) {
+    favourited = !!results[2].data;
+    userRating = results[3].data?.rating ?? null;
+  }
+
+  return { favourited, favouriteCount, ratingAverage, ratingCount, userRating };
+}

@@ -9,6 +9,7 @@ import {
   toggleCommentReaction,
   type CommentRow,
 } from "@/app/read/actions";
+import { createClient } from "@/lib/supabase/client";
 
 interface Props {
   chapterId: string;
@@ -42,6 +43,30 @@ export default function CommentSection({ chapterId, userId }: Props) {
   useEffect(() => {
     loadComments();
   }, [loadComments]);
+
+  // Real-time: subscribe to comment changes for this chapter
+  useEffect(() => {
+    const supabase = createClient();
+    const channel = supabase
+      .channel(`comments:${chapterId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "comments",
+          filter: `chapter_id=eq.${chapterId}`,
+        },
+        () => {
+          loadComments();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [chapterId, loadComments]);
 
   const handleSubmit = () => {
     setError("");

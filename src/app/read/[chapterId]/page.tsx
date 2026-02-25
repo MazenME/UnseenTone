@@ -1,7 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { notFound } from "next/navigation";
 import ChapterReaderClient from "@/components/chapter-reader-client";
-import { getChapterLikeState, getBookmarkState, getChapterRatingState } from "@/app/read/actions";
+import { getChapterInteractionState } from "@/app/read/actions";
 
 interface Chapter {
   id: string;
@@ -79,20 +79,20 @@ async function getChapterData(chapterId: string) {
 
 export default async function ReadChapterPage({ params }: { params: Promise<{ chapterId: string }> }) {
   const { chapterId } = await params;
-  const data = await getChapterData(chapterId);
+
+  // Fetch chapter data + user auth in parallel (1 auth call instead of 4)
+  const supabase = await createClient();
+  const [data, { data: { user } }] = await Promise.all([
+    getChapterData(chapterId),
+    supabase.auth.getUser(),
+  ]);
 
   if (!data) notFound();
 
-  // Fetch user + interaction state in parallel
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
   const userId = user?.id ?? null;
 
-  const [likeState, bookmarkState, ratingState] = await Promise.all([
-    getChapterLikeState(chapterId),
-    getBookmarkState(chapterId),
-    getChapterRatingState(chapterId),
-  ]);
+  // All interaction state in ONE batch (5 queries in parallel, 0 auth calls)
+  const state = await getChapterInteractionState(chapterId, userId);
 
   return (
     <ChapterReaderClient
@@ -101,12 +101,12 @@ export default async function ReadChapterPage({ params }: { params: Promise<{ ch
       prevChapter={data.prevChapter}
       nextChapter={data.nextChapter}
       userId={userId}
-      initialLikeCount={likeState.count}
-      initialLiked={likeState.liked}
-      initialBookmarked={bookmarkState.bookmarked}
-      initialRatingAverage={ratingState.average}
-      initialRatingCount={ratingState.count}
-      initialUserRating={ratingState.userRating}
+      initialLikeCount={state.likeCount}
+      initialLiked={state.liked}
+      initialBookmarked={state.bookmarked}
+      initialRatingAverage={state.ratingAverage}
+      initialRatingCount={state.ratingCount}
+      initialUserRating={state.userRating}
     />
   );
 }
