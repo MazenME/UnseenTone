@@ -126,7 +126,7 @@ export default function ChapterReaderClient({ chapter, novel, prevChapter, nextC
       {/* Chapter Content */}
       <main className="pt-20 pb-24 px-4">
         <article
-          className="mx-auto"
+          className="mx-auto w-full"
           style={{
             maxWidth: mounted ? `${settings.maxWidth}px` : "720px",
           }}
@@ -144,7 +144,7 @@ export default function ChapterReaderClient({ chapter, novel, prevChapter, nextC
             <h1 className="text-3xl sm:text-4xl font-extrabold text-fg mt-3 mb-4">
               {chapter.title}
             </h1>
-            <div className="flex items-center justify-center gap-4 text-sm text-fg-muted">
+            <div className="flex items-center justify-center gap-2 sm:gap-4 text-xs sm:text-sm text-fg-muted flex-wrap">
               <span>{chapter.word_count.toLocaleString()} words</span>
               <span>&middot;</span>
               <span>~{estimatedReadTime} min read</span>

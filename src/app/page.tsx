@@ -68,7 +68,7 @@ export default async function Home() {
           <div className="absolute inset-0 bg-gradient-to-b from-accent/5 via-transparent to-transparent pointer-events-none" />
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20 sm:py-28 text-center relative">
             <h1 className="text-5xl sm:text-7xl font-extrabold text-fg tracking-tight mb-6">
-              Unseen<span className="text-accent">Tone</span>
+              Kath<span className="text-accent">ion</span>
             </h1>
             <p className="text-lg sm:text-xl text-fg-muted max-w-2xl mx-auto leading-relaxed mb-10">
               Descend into a dark fantasy universe where forgotten gods whisper through
@@ -190,7 +190,7 @@ export default async function Home() {
         {/* Footer */}
         <footer className="border-t border-border py-8">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center text-sm text-fg-muted">
-            <p>&copy; {new Date().getFullYear()} UnseenTone. All worlds reserved.</p>
+            <p>&copy; {new Date().getFullYear()} Kathion. All worlds reserved.</p>
           </div>
         </footer>
       </main>

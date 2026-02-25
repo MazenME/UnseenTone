@@ -157,12 +157,22 @@ body {
 .chapter-content strong { font-weight: 700; }
 .chapter-content em { font-style: italic; }
 .chapter-content u { text-decoration: underline; }
+.chapter-content img { max-width: 100%; height: auto; }
+.chapter-content pre { overflow-x: auto; max-width: 100%; }
+.chapter-content table { display: block; overflow-x: auto; max-width: 100%; }
+.chapter-content iframe { max-width: 100%; }
 
 /* ─── TipTap Editor Styling ────────────────────────────────── */
 .tiptap {
   outline: none;
-  min-height: 400px;
-  padding: 1rem;
+  min-height: 250px;
+  padding: 0.75rem;
+}
+@media (min-width: 640px) {
+  .tiptap {
+    min-height: 400px;
+    padding: 1rem;
+  }
 }
 .tiptap p { margin-bottom: 0.75em; }
 .tiptap p.is-editor-empty:first-child::before {

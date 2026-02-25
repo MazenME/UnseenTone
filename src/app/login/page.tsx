@@ -75,14 +75,14 @@ function LoginForm() {
         <div className="text-center mb-8">
           <Link href="/" className="inline-block">
             <h1 className="text-3xl font-bold text-fg">
-              Unseen<span className="text-accent">Tone</span>
+              Kath<span className="text-accent">ion</span>
             </h1>
           </Link>
           <p className="text-fg-muted mt-2">Sign in to continue your journey</p>
         </div>
 
         {/* Card */}
-        <div className="bg-surface border border-border rounded-xl p-8 shadow-lg">
+        <div className="bg-surface border border-border rounded-xl p-5 sm:p-8 shadow-lg">
           {error && (
             <motion.div
               initial={{ opacity: 0, height: 0 }}
@@ -141,7 +141,7 @@ function LoginForm() {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
-                placeholder="witch@unseentone.com"
+                placeholder="witch@kathion.com"
                 className="w-full px-4 py-2.5 rounded-lg bg-bg-secondary border border-border text-fg placeholder:text-fg-muted/50 focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent transition-colors"
               />
             </div>

@@ -69,7 +69,7 @@ export default function DashboardShell({ children }: { children: React.ReactNode
         {/* Logo */}
         <div className="h-16 flex items-center px-6 border-b border-border">
           <Link href="/" className="text-xl font-bold text-fg">
-            Unseen<span className="text-accent">Tone</span>
+            Kath<span className="text-accent">ion</span>
           </Link>
         </div>
 

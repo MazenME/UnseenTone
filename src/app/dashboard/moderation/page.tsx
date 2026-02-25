@@ -30,7 +30,7 @@ export default function ModerationPage() {
       </div>
 
       {/* Tab Switcher */}
-      <div className="flex gap-1 bg-surface border border-border rounded-lg p-1 w-fit flex-wrap">
+      <div className="flex gap-1 bg-surface border border-border rounded-lg p-1 w-full sm:w-fit overflow-x-auto">
         {TABS.map((tab) => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.id;

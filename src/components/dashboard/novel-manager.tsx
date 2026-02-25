@@ -238,7 +238,7 @@ export default function NovelManager({ initialNovels }: { initialNovels: Novel[]
             <motion.div
               key={novel.id}
               layout
-              className="bg-surface border border-border rounded-xl overflow-hidden group"
+              className="bg-surface border border-border rounded-xl overflow-hidden group relative"
             >
               {/* Cover */}
               <div className="h-56 bg-bg-secondary relative overflow-hidden">
@@ -247,7 +247,7 @@ export default function NovelManager({ initialNovels }: { initialNovels: Novel[]
                     src={novel.cover_url}
                     alt={novel.title}
                     fill
-                    className="object-fill"
+                    className="object-cover"
                   />
                 ) : (
                   <div className="absolute inset-0 flex items-center justify-center text-fg-muted/30">

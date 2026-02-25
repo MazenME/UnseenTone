@@ -144,7 +144,7 @@ export default function CommentSection({ chapterId, userId }: Props) {
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.3 }}
       className={`bg-surface border border-border rounded-xl p-4 ${depth > 0 ? "border-l-2 border-l-accent/30" : ""}`}
-      style={depth > 0 ? { marginLeft: `${Math.min(depth, 3) * 1.5}rem` } : undefined}
+      style={depth > 0 ? { marginLeft: `${Math.min(depth, 3) * 0.75}rem` } : undefined}
     >
       {/* Header */}
       <div className="flex items-center gap-3 mb-2">
@@ -238,7 +238,7 @@ export default function CommentSection({ chapterId, userId }: Props) {
             rows={2}
             className="w-full bg-bg border border-border rounded-lg px-3 py-2 text-fg text-sm resize-none focus:border-accent/50 focus:outline-none placeholder:text-fg-muted/50"
           />
-          <div className="flex items-end justify-between gap-3 mt-2">
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-end justify-between gap-3 mt-2">
             <div className="flex-shrink-0">
               <Turnstile
                 key={replyTurnstileKey}
@@ -249,7 +249,7 @@ export default function CommentSection({ chapterId, userId }: Props) {
                 size="compact"
               />
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 justify-end">
               <button
                 onClick={() => { setReplyingTo(null); setReplyBody(""); setReplyError(""); }}
                 className="px-3 py-1.5 rounded-lg text-fg-muted text-xs hover:text-fg transition-colors"
@@ -306,7 +306,7 @@ export default function CommentSection({ chapterId, userId }: Props) {
             rows={3}
             className="w-full bg-bg border border-border rounded-lg px-3 py-2 text-fg text-sm resize-none focus:border-accent/50 focus:outline-none placeholder:text-fg-muted/50"
           />
-          <div className="flex items-end justify-between gap-3 mt-3">
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-end justify-between gap-3 mt-3">
             <div className="flex-shrink-0">
               <Turnstile
                 key={turnstileKey}
@@ -317,7 +317,7 @@ export default function CommentSection({ chapterId, userId }: Props) {
                 size="compact"
               />
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 justify-end">
               <span className="text-xs text-fg-muted">{body.length}/2000</span>
               <button
                 onClick={handleSubmit}

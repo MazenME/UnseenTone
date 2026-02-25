@@ -37,7 +37,7 @@ export default async function BookmarksPage() {
     <div className="min-h-screen bg-bg">
       <Navbar />
 
-      <main className="max-w-3xl mx-auto px-4 py-10">
+        <main className="max-w-3xl mx-auto px-4 sm:px-6 py-10">
         {/* Header */}
         <div className="flex items-center gap-3 mb-8">
           <svg className="w-6 h-6 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>

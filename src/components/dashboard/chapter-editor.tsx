@@ -78,7 +78,7 @@ export default function ChapterEditor({
   return (
     <div className="max-w-5xl mx-auto space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
         <div className="flex items-center gap-3">
           <Link
             href="/dashboard/chapters"
@@ -92,7 +92,7 @@ export default function ChapterEditor({
             {isEditing ? "Edit Chapter" : "New Chapter"}
           </h3>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
           {!isPublished && (
             <button
               onClick={() => handleSave(false)}

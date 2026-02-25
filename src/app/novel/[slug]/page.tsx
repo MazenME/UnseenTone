@@ -101,14 +101,14 @@ export default async function NovelPage({ params }: { params: Promise<{ slug: st
               <img
                 src={novel.cover_url}
                 alt=""
-                className="w-full h-full object-fill object-center "
+                className="w-full h-full object-cover object-center"
               />
               <div className="absolute inset-0 bg-gradient-to-b from-bg/40 via-bg/70 to-bg" />
             </div>
           )}
 
           <div className="relative max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 pt-20 sm:pt-32 pb-8">
-            <div className="flex flex-col sm:flex-row gap-8 items-start">
+            <div className="flex flex-col sm:flex-row gap-8 items-center sm:items-start">
               {/* Cover Thumbnail */}
               {novel.cover_url && (
                 <div className="w-40 sm:w-52 flex-shrink-0 rounded-xl overflow-hidden shadow-2xl border border-border">
@@ -121,8 +121,8 @@ export default async function NovelPage({ params }: { params: Promise<{ slug: st
               )}
 
               {/* Info */}
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 mb-3">
+              <div className="flex-1 min-w-0 text-center sm:text-left">
+                <div className="flex items-center justify-center sm:justify-start gap-2 mb-3">
                   <span
                     className={`text-xs font-semibold px-2.5 py-1 rounded-full capitalize ${
                       novel.status === "completed"
@@ -143,7 +143,7 @@ export default async function NovelPage({ params }: { params: Promise<{ slug: st
                     {novel.synopsis}
                   </p>
                 )}
-                <div className="flex flex-wrap items-center gap-4 text-sm text-fg-muted">
+                <div className="flex flex-wrap items-center justify-center sm:justify-start gap-4 text-sm text-fg-muted">
                   <span className="flex items-center gap-1.5">
                     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
@@ -166,7 +166,7 @@ export default async function NovelPage({ params }: { params: Promise<{ slug: st
                 </div>
 
                 {/* Start Reading CTA + Favourite */}
-                <div className="flex flex-wrap items-center gap-4 mt-6">
+                <div className="flex flex-wrap items-center justify-center sm:justify-start gap-4 mt-6">
                   {chapters.length > 0 && (
                     <Link
                       href={`/read/${chapters[0].id}`}
@@ -197,7 +197,7 @@ export default async function NovelPage({ params }: { params: Promise<{ slug: st
 
                 {/* Chapter Ratings Aggregate */}
                 {chapterRatingCount > 0 && (
-                  <div className="flex items-center gap-2 mt-3">
+                  <div className="flex items-center justify-center sm:justify-start gap-2 mt-3">
                     <span className="text-xs text-fg-muted uppercase tracking-wider">Chapters Rating</span>
                     <div className="flex items-center gap-1.5 text-sm">
                       <svg className="w-4 h-4 text-amber-400" fill="currentColor" viewBox="0 0 24 24">

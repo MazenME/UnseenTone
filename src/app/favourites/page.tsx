@@ -59,7 +59,7 @@ export default async function FavouritesPage() {
     <div className="min-h-screen bg-bg">
       <Navbar />
 
-      <main className="max-w-3xl mx-auto px-4 py-10">
+        <main className="max-w-3xl mx-auto px-4 sm:px-6 py-10">
         {/* Header */}
         <div className="flex items-center gap-3 mb-8">
           <svg className="w-6 h-6 text-red-400" fill="currentColor" viewBox="0 0 24 24">

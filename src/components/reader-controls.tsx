@@ -30,7 +30,7 @@ const BUILTIN_FONTS: FontOption[] = [
   { id: "mono", label: "Monospace", value: "var(--font-geist-mono), 'Courier New', monospace" },
 ];
 
-const STORAGE_KEY = "unseen-tone-reader-settings";
+const STORAGE_KEY = "kathion-reader-settings";
 
 function loadSettings(): ReaderSettings {
   if (typeof window === "undefined") return DEFAULT_SETTINGS;
@@ -140,7 +140,7 @@ export default function ReaderControls({ settings, updateSettings, resetSettings
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: -8, scale: 0.95 }}
               transition={{ duration: 0.15 }}
-              className="absolute right-0 mt-2 w-72 bg-surface border border-border rounded-xl shadow-xl z-50 p-4 space-y-5"
+              className="absolute right-0 mt-2 w-[calc(100vw-2rem)] sm:w-72 bg-surface border border-border rounded-xl shadow-xl z-50 p-4 space-y-5"
             >
               <div className="flex items-center justify-between">
                 <h4 className="text-sm font-semibold text-fg">Reader Settings</h4>
