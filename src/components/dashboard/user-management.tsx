@@ -175,10 +175,10 @@ export default function UserManagement() {
                             )}
                           </div>
                           <div className="min-w-0">
-                            <div className="font-medium text-fg truncate max-w-[200px]">
+                            <div className="font-medium text-fg truncate max-w-[120px] sm:max-w-[200px]">
                               {user.display_name || "—"}
                             </div>
-                            <div className="text-xs text-fg-muted truncate max-w-[200px]">
+                            <div className="text-xs text-fg-muted truncate max-w-[120px] sm:max-w-[200px]">
                               {user.email}
                             </div>
                           </div>
@@ -233,7 +233,7 @@ export default function UserManagement() {
                       {/* Actions */}
                       <td className="px-4 py-3 text-right">
                         {user.role !== "admin" && (
-                          <div className="flex items-center justify-end gap-2">
+                          <div className="flex items-center justify-end gap-2 flex-wrap">
                             {/* Ban / Unban */}
                             {user.is_banned ? (
                               <button

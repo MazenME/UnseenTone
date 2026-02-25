@@ -38,7 +38,7 @@ export default function ModerationPage() {
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
-              className={`relative flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+              className={`relative flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-4 py-2 rounded-md text-xs sm:text-sm font-medium transition-colors whitespace-nowrap flex-1 sm:flex-initial justify-center sm:justify-start ${
                 isActive ? "text-fg" : "text-fg-muted hover:text-fg"
               }`}
             >

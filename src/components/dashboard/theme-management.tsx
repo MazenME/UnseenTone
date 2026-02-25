@@ -122,12 +122,12 @@ export default function ThemeManagement() {
   return (
     <div className="space-y-4">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h3 className="text-lg font-semibold text-fg">Custom Themes</h3>
           <p className="text-sm text-fg-muted">Create themes that work exactly like the built-in ones.</p>
         </div>
-        <button onClick={() => setShowForm(!showForm)} className="px-4 py-2 rounded-lg bg-accent hover:bg-accent-hover text-white text-sm font-medium transition-colors">
+        <button onClick={() => setShowForm(!showForm)} className="px-4 py-2 rounded-lg bg-accent hover:bg-accent-hover text-white text-sm font-medium transition-colors w-full sm:w-auto">
           {showForm ? "Cancel" : "+ Add Theme"}
         </button>
       </div>
@@ -211,7 +211,7 @@ export default function ThemeManagement() {
       ) : (
         <div className="space-y-2">
           {themes.map((t) => (
-            <div key={t.id} className="bg-surface border border-border rounded-xl p-4 flex items-center gap-4">
+            <div key={t.id} className="bg-surface border border-border rounded-xl p-4 flex flex-col sm:flex-row items-start sm:items-center gap-4">
               <div className="w-14 h-14 rounded-lg border flex items-center justify-center flex-shrink-0" style={{ backgroundColor: t.bg, borderColor: t.border_color }}>
                 <div className="flex gap-0.5">
                   <div className="w-3 h-3 rounded-full" style={{ backgroundColor: t.accent }} />

@@ -167,7 +167,7 @@ export default function CommentModeration() {
               setSelectedChapterId("");
               setPage(1);
             }}
-            className="bg-bg border border-border rounded-lg px-3 py-2 text-sm text-fg focus:outline-none focus:ring-2 focus:ring-accent/50 min-w-[180px]"
+            className="bg-bg border border-border rounded-lg px-3 py-2 text-sm text-fg focus:outline-none focus:ring-2 focus:ring-accent/50 w-full sm:w-auto sm:min-w-[180px]"
           >
             <option value="">All Novels</option>
             {novels.map((n) => (
@@ -186,7 +186,7 @@ export default function CommentModeration() {
                   setSelectedChapterId(e.target.value);
                   setPage(1);
                 }}
-                className="bg-bg border border-border rounded-lg px-3 py-2 text-sm text-fg focus:outline-none focus:ring-2 focus:ring-accent/50 min-w-[200px]"
+                className="bg-bg border border-border rounded-lg px-3 py-2 text-sm text-fg focus:outline-none focus:ring-2 focus:ring-accent/50 w-full sm:w-auto sm:min-w-[200px]"
               >
                 <option value="">All Chapters</option>
                 {selectedNovel.chapters.map((ch) => (
@@ -277,8 +277,8 @@ export default function CommentModeration() {
                           </span>
                         )}
                       </div>
-                      <div className="flex items-center gap-2 text-xs text-fg-muted">
-                        <span>{comment.users_profile?.email}</span>
+                      <div className="flex items-center gap-2 text-xs text-fg-muted flex-wrap">
+                        <span className="truncate max-w-[150px] sm:max-w-none">{comment.users_profile?.email}</span>
                         <span>·</span>
                         <span>{new Date(comment.created_at).toLocaleString()}</span>
                       </div>
@@ -323,7 +323,7 @@ export default function CommentModeration() {
                   </div>
 
                   {/* Action Buttons */}
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     {/* Ban User */}
                     {comment.users_profile && !comment.users_profile.is_banned && (
                       <button

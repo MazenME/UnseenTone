@@ -73,7 +73,7 @@ export default function FontManagement() {
   return (
     <div className="space-y-4">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h3 className="text-lg font-semibold text-fg">Custom Fonts</h3>
           <p className="text-sm text-fg-muted">
@@ -82,7 +82,7 @@ export default function FontManagement() {
         </div>
         <button
           onClick={() => setShowForm(!showForm)}
-          className="px-4 py-2 rounded-lg bg-accent hover:bg-accent-hover text-white text-sm font-medium transition-colors"
+          className="px-4 py-2 rounded-lg bg-accent hover:bg-accent-hover text-white text-sm font-medium transition-colors w-full sm:w-auto"
         >
           {showForm ? "Cancel" : "+ Add Font"}
         </button>
