@@ -11,6 +11,7 @@ interface Chapter {
   content: string;
   word_count: number;
   reads: number;
+  text_direction: "ltr" | "rtl";
   created_at: string;
 }
 
@@ -39,15 +40,13 @@ async function getChapterData(chapterId: string) {
 
   if (!chapter) return null;
 
-  // Fetch novel
-  const { data: novel } = await supabase
-    .from("novels")
-    .select("id, title, slug")
-    .eq("id", chapter.novel_id)
-    .single();
-
-  // Fetch previous and next chapters
-  const [{ data: prevChapters }, { data: nextChapters }] = await Promise.all([
+  // Fetch novel + prev/next chapters in parallel (3 queries at once instead of sequential)
+  const [{ data: novel }, { data: prevChapters }, { data: nextChapters }] = await Promise.all([
+    supabase
+      .from("novels")
+      .select("id, title, slug")
+      .eq("id", chapter.novel_id)
+      .single(),
     supabase
       .from("chapters")
       .select("id, chapter_number, title")

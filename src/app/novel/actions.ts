@@ -12,23 +12,29 @@ export async function getNovelFavouriteState(
     data: { user },
   } = await supabase.auth.getUser();
 
-  const { count } = await supabase
-    .from("novel_favourites")
-    .select("*", { count: "exact", head: true })
-    .eq("novel_id", novelId);
-
-  let favourited = false;
-  if (user) {
-    const { data } = await supabase
+  // Parallelize count + user check
+  const queries: PromiseLike<any>[] = [
+    supabase
       .from("novel_favourites")
-      .select("id")
-      .eq("novel_id", novelId)
-      .eq("user_id", user.id)
-      .maybeSingle();
-    favourited = !!data;
+      .select("*", { count: "exact", head: true })
+      .eq("novel_id", novelId),
+  ];
+  if (user) {
+    queries.push(
+      supabase
+        .from("novel_favourites")
+        .select("id")
+        .eq("novel_id", novelId)
+        .eq("user_id", user.id)
+        .maybeSingle()
+    );
   }
 
-  return { favourited, count: count ?? 0 };
+  const results = await Promise.all(queries);
+  const count = results[0].count ?? 0;
+  const favourited = user ? !!results[1].data : false;
+
+  return { favourited, count };
 }
 
 export async function toggleNovelFavourite(
@@ -87,25 +93,29 @@ export async function getNovelRatingState(
     data: { user },
   } = await supabase.auth.getUser();
 
-  const { data: ratings } = await supabase
-    .from("novel_ratings")
-    .select("rating")
-    .eq("novel_id", novelId);
-
-  const all = ratings || [];
-  const count = all.length;
-  const average = count > 0 ? all.reduce((s, r) => s + r.rating, 0) / count : 0;
-
-  let userRating: number | null = null;
-  if (user) {
-    const { data } = await supabase
+  // Parallelize ratings fetch + user rating check
+  const queries: PromiseLike<any>[] = [
+    supabase
       .from("novel_ratings")
       .select("rating")
-      .eq("novel_id", novelId)
-      .eq("user_id", user.id)
-      .maybeSingle();
-    userRating = data?.rating ?? null;
+      .eq("novel_id", novelId),
+  ];
+  if (user) {
+    queries.push(
+      supabase
+        .from("novel_ratings")
+        .select("rating")
+        .eq("novel_id", novelId)
+        .eq("user_id", user.id)
+        .maybeSingle()
+    );
   }
+
+  const results = await Promise.all(queries);
+  const all = results[0].data || [];
+  const count = all.length;
+  const average = count > 0 ? all.reduce((s: any, r: any) => s + r.rating, 0) / count : 0;
+  const userRating = user ? (results[1].data?.rating ?? null) : null;
 
   return { average: Math.round(average * 10) / 10, count, userRating };
 }

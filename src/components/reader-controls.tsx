@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { createClient } from "@/lib/supabase/client";
+import { useAuth } from "@/components/providers/auth-provider";
 
 export interface ReaderSettings {
   fontSize: number;
@@ -75,8 +76,24 @@ interface ReaderControlsProps {
 export default function ReaderControls({ settings, updateSettings, resetSettings }: ReaderControlsProps) {
   const [open, setOpen] = useState(false);
   const [allFonts, setAllFonts] = useState<FontOption[]>(BUILTIN_FONTS);
+  const { user } = useAuth();
 
+  // Load custom fonts only when user is logged in
   useEffect(() => {
+    if (!user) {
+      // Not logged in → only builtin fonts
+      setAllFonts(BUILTIN_FONTS);
+
+      // Remove injected custom font links
+      document.querySelectorAll('link[id^="custom-font-"]').forEach((el) => el.remove());
+
+      // If current font is a custom one, fall back to default
+      if (settings.fontFamily && !BUILTIN_FONTS.some((f) => f.value === settings.fontFamily)) {
+        updateSettings({ fontFamily: BUILTIN_FONTS[0].value });
+      }
+      return;
+    }
+
     const supabase = createClient();
     supabase
       .from("custom_fonts")
@@ -106,7 +123,8 @@ export default function ReaderControls({ settings, updateSettings, resetSettings
           });
         }
       });
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
 
   // Dynamic grid columns: 3 for built-in only, otherwise auto
   const gridCols = allFonts.length <= 3 ? "grid-cols-3" : "grid-cols-2 sm:grid-cols-3";

@@ -37,6 +37,7 @@ async function getNovelBySlug(slug: string) {
 
   if (!novel) return null;
 
+  // Fetch chapters in parallel with auth (auth is handled by caller)
   const { data: chapters } = await supabase
     .from("chapters")
     .select("id, chapter_number, title, word_count, reads, created_at")
@@ -50,26 +51,37 @@ async function getNovelBySlug(slug: string) {
 export default async function NovelPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
 
-  // Fetch novel data + user auth in parallel (1 auth call instead of 3)
   const supabase = await createClient();
-  const [result, { data: { user } }] = await Promise.all([
-    getNovelBySlug(slug),
+
+  // Fetch novel + chapters (need novel.id first for chapters query)
+  // But we can parallelize auth with the novel lookup
+  const [{ data: novel }, { data: { user } }] = await Promise.all([
+    supabase.from("novels").select("*").eq("slug", slug).single(),
     supabase.auth.getUser(),
   ]);
 
-  if (!result) notFound();
+  if (!novel) notFound();
 
-  const { novel, chapters } = result;
+  // Now fetch chapters + interaction state + chapter ratings all in parallel
   const userId = user?.id ?? null;
 
-  // Fetch interaction state + chapter ratings in parallel
-  const chapterIds = chapters.map((c) => c.id);
-  const [interactionState, chapterRatingsResult] = await Promise.all([
+  const [{ data: chapterData }, interactionState] = await Promise.all([
+    supabase
+      .from("chapters")
+      .select("id, chapter_number, title, word_count, reads, created_at")
+      .eq("novel_id", novel.id)
+      .eq("is_published", true)
+      .order("chapter_number", { ascending: true }),
     getNovelInteractionState(novel.id, userId),
-    chapterIds.length > 0
-      ? supabase.from("chapter_ratings").select("chapter_id, rating").in("chapter_id", chapterIds)
-      : Promise.resolve({ data: null }),
   ]);
+
+  const chapterList = (chapterData as Chapter[]) || [];
+  const chapterIds = chapterList.map((c) => c.id);
+
+  // Fetch chapter ratings (if chapters exist)
+  const chapterRatingsResult = chapterIds.length > 0
+    ? await supabase.from("chapter_ratings").select("chapter_id, rating").in("chapter_id", chapterIds)
+    : { data: null };
 
   const { favourited, favouriteCount: count, ratingAverage, ratingCount: novelRatingCount, userRating } = interactionState;
 
@@ -89,6 +101,8 @@ export default async function NovelPage({ params }: { params: Promise<{ slug: st
     const avg = ratings.reduce((s, v) => s + v, 0) / ratings.length;
     perChapterRating[cid] = { avg: Math.round(avg * 10) / 10, count: ratings.length };
   }
+
+  const chapters = chapterList;
 
   return (
     <>

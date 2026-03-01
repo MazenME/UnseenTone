@@ -221,18 +221,19 @@ export async function toggleCommentReaction(
     newReaction = reactionType;
   }
 
-  // Get updated counts
-  const { count: likes } = await supabase
-    .from("comment_reactions")
-    .select("*", { count: "exact", head: true })
-    .eq("comment_id", commentId)
-    .eq("reaction_type", "like");
-
-  const { count: dislikes } = await supabase
-    .from("comment_reactions")
-    .select("*", { count: "exact", head: true })
-    .eq("comment_id", commentId)
-    .eq("reaction_type", "dislike");
+  // Get updated counts in parallel (instead of 2 sequential queries)
+  const [{ count: likes }, { count: dislikes }] = await Promise.all([
+    supabase
+      .from("comment_reactions")
+      .select("*", { count: "exact", head: true })
+      .eq("comment_id", commentId)
+      .eq("reaction_type", "like"),
+    supabase
+      .from("comment_reactions")
+      .select("*", { count: "exact", head: true })
+      .eq("comment_id", commentId)
+      .eq("reaction_type", "dislike"),
+  ]);
 
   return { likes: likes ?? 0, dislikes: dislikes ?? 0, user_reaction: newReaction };
 }
@@ -244,23 +245,29 @@ export async function getChapterLikeState(
 ): Promise<{ count: number; liked: boolean }> {
   const { supabase, user } = await getUser();
 
-  const { count } = await supabase
-    .from("chapter_likes")
-    .select("*", { count: "exact", head: true })
-    .eq("chapter_id", chapterId);
-
-  let liked = false;
-  if (user) {
-    const { data } = await supabase
+  // Parallelize count + user-like check
+  const queries: PromiseLike<any>[] = [
+    supabase
       .from("chapter_likes")
-      .select("id")
-      .eq("chapter_id", chapterId)
-      .eq("user_id", user.id)
-      .maybeSingle();
-    liked = !!data;
+      .select("*", { count: "exact", head: true })
+      .eq("chapter_id", chapterId),
+  ];
+  if (user) {
+    queries.push(
+      supabase
+        .from("chapter_likes")
+        .select("id")
+        .eq("chapter_id", chapterId)
+        .eq("user_id", user.id)
+        .maybeSingle()
+    );
   }
 
-  return { count: count ?? 0, liked };
+  const results = await Promise.all(queries);
+  const count = results[0].count ?? 0;
+  const liked = user ? !!results[1].data : false;
+
+  return { count, liked };
 }
 
 export async function toggleLike(
@@ -372,25 +379,29 @@ export async function getChapterRatingState(
 ): Promise<{ average: number; count: number; userRating: number | null }> {
   const { supabase, user } = await getUser();
 
-  const { data: ratings } = await supabase
-    .from("chapter_ratings")
-    .select("rating")
-    .eq("chapter_id", chapterId);
-
-  const all = ratings || [];
-  const count = all.length;
-  const average = count > 0 ? all.reduce((s, r) => s + r.rating, 0) / count : 0;
-
-  let userRating: number | null = null;
-  if (user) {
-    const { data } = await supabase
+  // Parallelize ratings fetch + user rating check
+  const queries: PromiseLike<any>[] = [
+    supabase
       .from("chapter_ratings")
       .select("rating")
-      .eq("chapter_id", chapterId)
-      .eq("user_id", user.id)
-      .maybeSingle();
-    userRating = data?.rating ?? null;
+      .eq("chapter_id", chapterId),
+  ];
+  if (user) {
+    queries.push(
+      supabase
+        .from("chapter_ratings")
+        .select("rating")
+        .eq("chapter_id", chapterId)
+        .eq("user_id", user.id)
+        .maybeSingle()
+    );
   }
+
+  const results = await Promise.all(queries);
+  const all = results[0].data || [];
+  const count = all.length;
+  const average = count > 0 ? all.reduce((s: any, r: any) => s + r.rating, 0) / count : 0;
+  const userRating = user ? (results[1].data?.rating ?? null) : null;
 
   return { average: Math.round(average * 10) / 10, count, userRating };
 }

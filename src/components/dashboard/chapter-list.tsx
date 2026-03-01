@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { deleteChapter } from "@/app/dashboard/chapters/actions";
+import { deleteChapter, toggleChapterDirection } from "@/app/dashboard/chapters/actions";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
@@ -14,6 +14,7 @@ type Chapter = {
   word_count: number;
   is_published: boolean;
   reads: number;
+  text_direction: "ltr" | "rtl";
   created_at: string;
   novels: { title: string } | null;
 };
@@ -35,6 +36,8 @@ export default function ChapterList({
   const [filterNovel, setFilterNovel] = useState<string>("all");
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [dirLoading, setDirLoading] = useState<string | null>(null);
+  const [directionMap, setDirectionMap] = useState<Record<string, "ltr" | "rtl">>({});
 
   const filtered =
     filterNovel === "all"
@@ -46,6 +49,16 @@ export default function ChapterList({
     await deleteChapter(id);
     setDeleteConfirm(null);
     setLoading(false);
+    router.refresh();
+  };
+
+  const handleToggleDirection = async (id: string, currentDir: "ltr" | "rtl") => {
+    setDirLoading(id);
+    const result = await toggleChapterDirection(id);
+    if (result.success && result.direction) {
+      setDirectionMap((prev) => ({ ...prev, [id]: result.direction as "ltr" | "rtl" }));
+    }
+    setDirLoading(null);
     router.refresh();
   };
 
@@ -102,6 +115,7 @@ export default function ChapterList({
                   <th className="px-4 py-3 text-xs font-medium text-fg-muted uppercase tracking-wider hidden sm:table-cell">Words</th>
                   <th className="px-4 py-3 text-xs font-medium text-fg-muted uppercase tracking-wider hidden sm:table-cell">Reads</th>
                   <th className="px-4 py-3 text-xs font-medium text-fg-muted uppercase tracking-wider">Status</th>
+                  <th className="px-4 py-3 text-xs font-medium text-fg-muted uppercase tracking-wider hidden sm:table-cell">Dir</th>
                   <th className="px-4 py-3 text-xs font-medium text-fg-muted uppercase tracking-wider text-right">Actions</th>
                 </tr>
               </thead>
@@ -131,6 +145,35 @@ export default function ChapterList({
                       >
                         {chapter.is_published ? "Published" : "Draft"}
                       </span>
+                    </td>
+                    <td className="px-4 py-3 hidden sm:table-cell">
+                      {(() => {
+                        const dir = directionMap[chapter.id] || chapter.text_direction || "ltr";
+                        const isRtl = dir === "rtl";
+                        return (
+                          <button
+                            onClick={() => handleToggleDirection(chapter.id, dir)}
+                            disabled={dirLoading === chapter.id}
+                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium transition-colors cursor-pointer ${
+                              isRtl
+                                ? "bg-purple-500/20 text-purple-400 hover:bg-purple-500/30"
+                                : "bg-blue-500/20 text-blue-400 hover:bg-blue-500/30"
+                            } ${dirLoading === chapter.id ? "opacity-50" : ""}`}
+                            title={`Switch to ${isRtl ? "LTR (English)" : "RTL (Arabic)"}`}
+                          >
+                            {isRtl ? (
+                              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M19 12H5m0 0l4-4m-4 4l4 4" />
+                              </svg>
+                            ) : (
+                              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M5 12h14m0 0l-4-4m4 4l-4 4" />
+                              </svg>
+                            )}
+                            {isRtl ? "RTL" : "LTR"}
+                          </button>
+                        );
+                      })()}
                     </td>
                     <td className="px-4 py-3 text-right">
                       <div className="flex items-center justify-end gap-1 relative">

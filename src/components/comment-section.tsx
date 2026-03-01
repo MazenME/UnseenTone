@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useTransition, useCallback } from "react";
+import { useState, useEffect, useTransition, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import Turnstile from "react-turnstile";
 import {
@@ -33,18 +33,24 @@ export default function CommentSection({ chapterId, userId }: Props) {
 
   const siteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY ?? "";
 
-  const loadComments = useCallback(async () => {
-    setLoading(true);
+  // Track whether we just submitted (to skip the next realtime event)
+  const justSubmittedRef = useRef(false);
+  // Debounce timer for realtime events
+  const realtimeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Initial load shows skeleton; subsequent refreshes update silently
+  const loadComments = useCallback(async (showSkeleton = false) => {
+    if (showSkeleton) setLoading(true);
     const data = await getChapterComments(chapterId);
     setComments(data);
     setLoading(false);
   }, [chapterId]);
 
   useEffect(() => {
-    loadComments();
+    loadComments(true); // only initial load shows skeleton
   }, [loadComments]);
 
-  // Real-time: subscribe to comment changes for this chapter
+  // Real-time: subscribe to comment changes for this chapter (debounced)
   useEffect(() => {
     const supabase = createClient();
     const channel = supabase
@@ -58,12 +64,22 @@ export default function CommentSection({ chapterId, userId }: Props) {
           filter: `chapter_id=eq.${chapterId}`,
         },
         () => {
-          loadComments();
+          // Skip if we just submitted (our own manual loadComments handles it)
+          if (justSubmittedRef.current) {
+            justSubmittedRef.current = false;
+            return;
+          }
+          // Debounce: batch rapid events into one fetch (500ms)
+          if (realtimeTimerRef.current) clearTimeout(realtimeTimerRef.current);
+          realtimeTimerRef.current = setTimeout(() => {
+            loadComments(false); // silent refresh, no skeleton
+          }, 500);
         }
       )
       .subscribe();
 
     return () => {
+      if (realtimeTimerRef.current) clearTimeout(realtimeTimerRef.current);
       supabase.removeChannel(channel);
     };
   }, [chapterId, loadComments]);
@@ -85,7 +101,8 @@ export default function CommentSection({ chapterId, userId }: Props) {
       setBody("");
       setTurnstileToken(null);
       setTurnstileKey((k) => k + 1);
-      loadComments();
+      justSubmittedRef.current = true;
+      loadComments(false);
     });
   };
 
@@ -109,7 +126,8 @@ export default function CommentSection({ chapterId, userId }: Props) {
     setReplyTurnstileKey((k) => k + 1);
     setReplyingTo(null);
     setReplyPending(false);
-    loadComments();
+    justSubmittedRef.current = true;
+    loadComments(false);
   };
 
   const handleReaction = async (commentId: string, type: "like" | "dislike") => {

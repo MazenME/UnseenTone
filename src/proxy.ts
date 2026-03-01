@@ -8,50 +8,45 @@ export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const { supabase, user, supabaseResponse } = await updateSession(request);
 
-  // ── Check if user is banned ───────────────────────────────
+  const isAdminRoute = PROTECTED_ADMIN_PATHS.some(
+    (p) => pathname === p || pathname.startsWith(p + "/")
+  );
+  const isAuthRoute = AUTH_PATHS.some(
+    (p) => pathname === p || pathname.startsWith(p + "/")
+  );
+
   if (user) {
-    const { data: profile } = await supabase
-      .from("users_profile")
-      .select("is_banned, role")
-      .eq("id", user.id)
-      .single();
-
-    if (profile?.is_banned) {
-      // Sign the banned user out and redirect to login with a message
-      await supabase.auth.signOut();
-      const bannedUrl = request.nextUrl.clone();
-      bannedUrl.pathname = "/login";
-      bannedUrl.searchParams.set("error", "banned");
-      return NextResponse.redirect(bannedUrl);
-    }
-
-    // ── Protect /dashboard — admin only ───────────────────────
-    const isAdminRoute = PROTECTED_ADMIN_PATHS.some(
-      (p) => pathname === p || pathname.startsWith(p + "/")
-    );
-
-    if (isAdminRoute && profile?.role !== "admin") {
-      const homeUrl = request.nextUrl.clone();
-      homeUrl.pathname = "/";
-      return NextResponse.redirect(homeUrl);
-    }
-
-    // ── Redirect logged-in users away from auth pages ─────────
-    const isAuthRoute = AUTH_PATHS.some(
-      (p) => pathname === p || pathname.startsWith(p + "/")
-    );
-
+    // ── Redirect logged-in users away from auth pages (no DB needed) ──
     if (isAuthRoute) {
       const homeUrl = request.nextUrl.clone();
       homeUrl.pathname = "/";
       return NextResponse.redirect(homeUrl);
     }
+
+    // ── Only query DB for protected admin routes (not every page) ─────
+    if (isAdminRoute) {
+      const { data: profile } = await supabase
+        .from("users_profile")
+        .select("is_banned, role")
+        .eq("id", user.id)
+        .single();
+
+      if (profile?.is_banned) {
+        await supabase.auth.signOut();
+        const bannedUrl = request.nextUrl.clone();
+        bannedUrl.pathname = "/login";
+        bannedUrl.searchParams.set("error", "banned");
+        return NextResponse.redirect(bannedUrl);
+      }
+
+      if (profile?.role !== "admin") {
+        const homeUrl = request.nextUrl.clone();
+        homeUrl.pathname = "/";
+        return NextResponse.redirect(homeUrl);
+      }
+    }
   } else {
     // ── Unauthenticated users cannot access /dashboard ────────
-    const isAdminRoute = PROTECTED_ADMIN_PATHS.some(
-      (p) => pathname === p || pathname.startsWith(p + "/")
-    );
-
     if (isAdminRoute) {
       const loginUrl = request.nextUrl.clone();
       loginUrl.pathname = "/login";

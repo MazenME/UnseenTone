@@ -144,7 +144,7 @@ body {
 .chapter-content h1 { font-size: 1.875rem; font-weight: 700; margin-bottom: 0.75rem; color: var(--content-heading, var(--fg)); }
 .chapter-content h2 { font-size: 1.5rem; font-weight: 600; margin-bottom: 0.5rem; color: var(--content-heading, var(--fg)); }
 .chapter-content h3 { font-size: 1.25rem; font-weight: 600; margin-bottom: 0.5rem; color: var(--content-heading, var(--fg)); }
-.chapter-content p  { margin-bottom: 1em; line-height: 1.8; }
+.chapter-content p  { margin-bottom: 1em; line-height: inherit; }
 .chapter-content a { color: var(--content-link, var(--accent)); text-decoration: underline; }
 .chapter-content a:hover { opacity: 0.8; }
 .chapter-content blockquote {

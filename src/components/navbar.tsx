@@ -14,6 +14,19 @@ export default function Navbar() {
   const [menuOpen, setMenuOpen] = useState(false);
   const { settings, updateSettings, resetSettings } = useReaderSettings();
 
+  // Derive display info from JWT metadata while profile loads
+  const displayName =
+    profile?.display_name ||
+    user?.user_metadata?.full_name ||
+    user?.user_metadata?.name ||
+    user?.email?.split("@")[0] ||
+    "User";
+  const avatarUrl =
+    profile?.avatar_url ||
+    user?.user_metadata?.avatar_url ||
+    user?.user_metadata?.picture ||
+    null;
+
   const handleSignOut = async () => {
     await signOut();
     setMenuOpen(false);
@@ -43,19 +56,19 @@ export default function Navbar() {
                   onClick={() => setMenuOpen(!menuOpen)}
                   className="flex items-center gap-2 px-3 py-1.5 rounded-lg hover:bg-bg-secondary transition-colors cursor-pointer"
                 >
-                  {profile?.avatar_url ? (
+                  {avatarUrl ? (
                     <img
-                      src={profile.avatar_url}
-                      alt={profile.display_name || "User"}
+                      src={avatarUrl}
+                      alt={displayName}
                       className="w-8 h-8 rounded-full object-cover"
                     />
                   ) : (
                     <div className="w-8 h-8 rounded-full bg-accent flex items-center justify-center text-white text-sm font-medium">
-                      {(profile?.display_name || user.email || "U")[0].toUpperCase()}
+                      {displayName[0].toUpperCase()}
                     </div>
                   )}
                   <span className="hidden sm:block text-sm text-fg-muted max-w-[120px] truncate">
-                    {profile?.display_name || user.email?.split("@")[0]}
+                    {displayName}
                   </span>
                   <svg
                     className={`w-4 h-4 text-fg-muted transition-transform ${menuOpen ? "rotate-180" : ""}`}
@@ -79,7 +92,7 @@ export default function Navbar() {
                     >
                       <div className="px-4 py-3 border-b border-border">
                         <p className="text-sm font-medium text-fg truncate">
-                          {profile?.display_name || "User"}
+                          {displayName}
                         </p>
                         <p className="text-xs text-fg-muted truncate">{user.email}</p>
                       </div>

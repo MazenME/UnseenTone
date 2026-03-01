@@ -39,20 +39,21 @@ export default async function FavouritesPage() {
 
   if (!user) redirect("/login?redirect=/favourites");
 
-  const { data, error } = await supabase
-    .from("chapter_likes")
-    .select("id, created_at, chapters(id, title, chapter_number, word_count, novels(title, slug))")
-    .eq("user_id", user.id)
-    .order("created_at", { ascending: false });
+  // Fetch chapter likes AND novel favourites in parallel (instead of sequential)
+  const [{ data, error }, { data: novelData, error: novelErr }] = await Promise.all([
+    supabase
+      .from("chapter_likes")
+      .select("id, created_at, chapters(id, title, chapter_number, word_count, novels(title, slug))")
+      .eq("user_id", user.id)
+      .order("created_at", { ascending: false }),
+    supabase
+      .from("novel_favourites")
+      .select("id, created_at, novels(id, title, slug, cover_url, status, total_reads)")
+      .eq("user_id", user.id)
+      .order("created_at", { ascending: false }),
+  ]);
 
   const favourites = (error ? [] : (data as unknown as LikeRow[])) || [];
-
-  const { data: novelData, error: novelErr } = await supabase
-    .from("novel_favourites")
-    .select("id, created_at, novels(id, title, slug, cover_url, status, total_reads)")
-    .eq("user_id", user.id)
-    .order("created_at", { ascending: false });
-
   const novelFavourites = (novelErr ? [] : (novelData as unknown as NovelFavRow[])) || [];
 
   return (

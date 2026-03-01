@@ -4,6 +4,7 @@ import { useTheme } from "next-themes";
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { createClient } from "@/lib/supabase/client";
+import { useAuth } from "@/components/providers/auth-provider";
 
 interface ThemeEntry {
   id: string;
@@ -42,14 +43,32 @@ const BUILTIN_THEMES: ThemeEntry[] = [
 
 export default function ThemeSwitcher() {
   const { theme, setTheme } = useTheme();
+  const { user } = useAuth();
   const [open, setOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
   const [allThemes, setAllThemes] = useState<ThemeEntry[]>(BUILTIN_THEMES);
 
   useEffect(() => {
     setMounted(true);
+  }, []);
 
-    // Load custom themes from Supabase
+  // Load custom themes only when user is logged in
+  useEffect(() => {
+    if (!user) {
+      // Not logged in → only builtin themes
+      setAllThemes(BUILTIN_THEMES);
+
+      // Remove injected custom theme CSS
+      const styleEl = document.getElementById("custom-themes-css");
+      if (styleEl) styleEl.textContent = "";
+
+      // If current theme is a custom one, fall back to default
+      if (theme && !BUILTIN_THEMES.some((t) => t.id === theme)) {
+        setTheme("the-void");
+      }
+      return;
+    }
+
     const supabase = createClient();
     supabase
       .from("custom_themes")
@@ -96,7 +115,8 @@ export default function ThemeSwitcher() {
           styleEl.textContent = css;
         }
       });
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
 
   if (!mounted) {
     return (

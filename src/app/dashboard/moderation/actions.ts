@@ -12,6 +12,12 @@ async function requireAdmin() {
   } = await supabase.auth.getUser();
   if (!user) throw new Error("Unauthorized");
 
+  // Fast path: if the middleware already validated admin via DB,
+  // we can trust the user_metadata role (set by trigger) for this request
+  const metaRole = user.user_metadata?.role || user.app_metadata?.role;
+  if (metaRole === "admin") return user;
+
+  // Fallback: verify against DB
   const { data: profile } = await supabase
     .from("users_profile")
     .select("role")
@@ -75,24 +81,22 @@ export async function getNovelsWithChapters(): Promise<
   await requireAdmin();
   const admin = createAdminClient();
 
-  const { data: novels } = await admin
-    .from("novels")
-    .select("id, title")
-    .order("created_at", { ascending: false });
+  // Fetch novels and ALL chapters in parallel (no N+1)
+  const [{ data: novels }, { data: allChapters }] = await Promise.all([
+    admin.from("novels").select("id, title").order("created_at", { ascending: false }),
+    admin.from("chapters").select("id, title, chapter_number, novel_id").order("chapter_number", { ascending: true }),
+  ]);
 
   if (!novels || novels.length === 0) return [];
 
-  const result = [];
-  for (const n of novels) {
-    const { data: chapters } = await admin
-      .from("chapters")
-      .select("id, title, chapter_number")
-      .eq("novel_id", n.id)
-      .order("chapter_number", { ascending: true });
-    result.push({ ...n, chapters: chapters || [] });
+  // Group chapters by novel_id in JS
+  const chaptersByNovel: Record<string, { id: string; title: string; chapter_number: number }[]> = {};
+  for (const ch of allChapters || []) {
+    if (!chaptersByNovel[ch.novel_id]) chaptersByNovel[ch.novel_id] = [];
+    chaptersByNovel[ch.novel_id].push({ id: ch.id, title: ch.title, chapter_number: ch.chapter_number });
   }
 
-  return result;
+  return novels.map((n) => ({ ...n, chapters: chaptersByNovel[n.id] || [] }));
 }
 
 // ── Delete a comment (soft-delete) ───────────────────────────

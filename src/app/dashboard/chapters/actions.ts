@@ -95,3 +95,31 @@ export async function deleteChapter(chapterId: string) {
   revalidatePath("/dashboard/chapters");
   return { success: true };
 }
+
+export async function toggleChapterDirection(chapterId: string) {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { error: "Unauthorized" };
+
+  // Fetch current direction
+  const { data: chapter } = await supabase
+    .from("chapters")
+    .select("text_direction")
+    .eq("id", chapterId)
+    .single();
+
+  const newDir = chapter?.text_direction === "rtl" ? "ltr" : "rtl";
+
+  const { error } = await supabase
+    .from("chapters")
+    .update({ text_direction: newDir })
+    .eq("id", chapterId);
+
+  if (error) return { error: error.message };
+
+  revalidatePath("/dashboard/chapters");
+  revalidatePath(`/read/${chapterId}`);
+  return { success: true, direction: newDir };
+}

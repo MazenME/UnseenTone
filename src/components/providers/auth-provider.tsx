@@ -33,61 +33,78 @@ export function useAuth() {
   return useContext(AuthContext);
 }
 
+const PROFILE_CACHE_KEY = "kathion-profile-cache";
+
+function getCachedProfile(): UserProfile | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const cached = localStorage.getItem(PROFILE_CACHE_KEY);
+    return cached ? JSON.parse(cached) : null;
+  } catch { return null; }
+}
+
+function setCachedProfile(profile: UserProfile | null) {
+  if (typeof window === "undefined") return;
+  try {
+    if (profile) localStorage.setItem(PROFILE_CACHE_KEY, JSON.stringify(profile));
+    else localStorage.removeItem(PROFILE_CACHE_KEY);
+  } catch { /* empty */ }
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
-  const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [profile, setProfile] = useState<UserProfile | null>(getCachedProfile);
   const [loading, setLoading] = useState(true);
   const supabase = createClient();
 
-  const fetchProfile = useCallback(async (authUser: User) => {
-    // Small delay to allow the DB trigger to create the profile row
-    // (relevant for brand-new signups where the trigger may not have fired yet)
-    let retries = 0;
+  const fetchProfile = useCallback(async (authUser: User, isNewSignup = false) => {
     let data: UserProfile | null = null;
 
-    while (retries < 3) {
+    if (isNewSignup) {
+      // For new signups, the DB trigger may not have fired yet — retry a few times
+      let retries = 0;
+      while (retries < 3) {
+        const { data: row } = await supabase
+          .from("users_profile")
+          .select("id, email, display_name, avatar_url, role, is_banned")
+          .eq("id", authUser.id)
+          .single();
+        if (row) { data = row as UserProfile; break; }
+        retries++;
+        await new Promise((r) => setTimeout(r, 500));
+      }
+    } else {
+      // Normal load — single fast query, no retries
       const { data: row } = await supabase
         .from("users_profile")
         .select("id, email, display_name, avatar_url, role, is_banned")
         .eq("id", authUser.id)
         .single();
-
-      if (row) {
-        data = row as UserProfile;
-        break;
-      }
-
-      retries++;
-      await new Promise((r) => setTimeout(r, 500));
+      data = row as UserProfile | null;
     }
 
     if (data) {
-      // If display_name is still null/empty, derive it from auth metadata
+      const meta = authUser.user_metadata;
+      const updates: Record<string, string> = {};
+
       if (!data.display_name) {
-        const meta = authUser.user_metadata;
         const derivedName =
           meta?.full_name || meta?.name || meta?.preferred_username || authUser.email?.split("@")[0] || "Reader";
-
-        // Update the DB so it persists
-        await supabase
-          .from("users_profile")
-          .update({ display_name: derivedName })
-          .eq("id", authUser.id);
-
         data.display_name = derivedName;
+        updates.display_name = derivedName;
       }
 
-      // Same for avatar
       if (!data.avatar_url) {
-        const meta = authUser.user_metadata;
         const derivedAvatar = meta?.avatar_url || meta?.picture || null;
         if (derivedAvatar) {
-          await supabase
-            .from("users_profile")
-            .update({ avatar_url: derivedAvatar })
-            .eq("id", authUser.id);
           data.avatar_url = derivedAvatar;
+          updates.avatar_url = derivedAvatar;
         }
+      }
+
+      // Single update call if needed (instead of two sequential)
+      if (Object.keys(updates).length > 0) {
+        supabase.from("users_profile").update(updates).eq("id", authUser.id).then(() => {});
       }
     }
 
@@ -96,38 +113,55 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
-    const getSession = async () => {
+    const init = async () => {
       const {
         data: { session },
       } = await supabase.auth.getSession();
 
       const authUser = session?.user ?? null;
       setUser(authUser);
+      // Show user immediately — profile loads in background
+      setLoading(false);
 
       if (authUser) {
+        // If we have a cached profile for this user, use it instantly
+        const cached = getCachedProfile();
+        if (cached && cached.id === authUser.id) {
+          setProfile(cached);
+        }
+        // Then refresh from DB in background
         const p = await fetchProfile(authUser);
-        setProfile(p);
+        if (p) {
+          setProfile(p);
+          setCachedProfile(p);
+        }
+      } else {
+        // No user — clear cached profile
+        setProfile(null);
+        setCachedProfile(null);
       }
-
-      setLoading(false);
     };
 
-    getSession();
+    init();
 
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange(async (_event, session) => {
       const authUser = session?.user ?? null;
       setUser(authUser);
+      setLoading(false);
 
       if (authUser) {
-        const p = await fetchProfile(authUser);
-        setProfile(p);
+        const isNewSignup = _event === "SIGNED_IN";
+        const p = await fetchProfile(authUser, isNewSignup);
+        if (p) {
+          setProfile(p);
+          setCachedProfile(p);
+        }
       } else {
         setProfile(null);
+        setCachedProfile(null);
       }
-
-      setLoading(false);
     });
 
     return () => {
@@ -140,6 +174,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await supabase.auth.signOut();
     setUser(null);
     setProfile(null);
+    setCachedProfile(null);
   };
 
   const refreshProfile = async () => {

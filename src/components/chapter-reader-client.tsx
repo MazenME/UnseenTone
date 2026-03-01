@@ -19,6 +19,7 @@ interface Chapter {
   content: string;
   word_count: number;
   reads: number;
+  text_direction: "ltr" | "rtl";
   created_at: string;
 }
 
@@ -168,10 +169,12 @@ export default function ChapterReaderClient({ chapter, novel, prevChapter, nextC
             animate={{ opacity: 1 }}
             transition={{ duration: 0.6, delay: 0.2 }}
             className="chapter-content"
+            dir={chapter.text_direction || "ltr"}
             style={{
               fontSize: mounted ? `${settings.fontSize}px` : "18px",
               fontFamily: mounted ? settings.fontFamily : undefined,
               lineHeight: mounted ? settings.lineHeight : 1.8,
+              textAlign: chapter.text_direction === "rtl" ? "right" : "left",
             }}
             dangerouslySetInnerHTML={{
               __html: chapter.content
@@ -179,6 +182,10 @@ export default function ChapterReaderClient({ chapter, novel, prevChapter, nextC
                 .replace(/font-family\s*:[^;]*;?\s*/gi, "")
                 // Strip inline color so the theme's --content-text / --content-heading apply
                 .replace(/(?<![\w-])color\s*:[^;]*;?\s*/gi, "")
+                // Strip inline line-height so the reader line-spacing setting applies
+                .replace(/line-height\s*:[^;]*;?\s*/gi, "")
+                // Strip inline width / max-width so the reader content-width setting applies
+                .replace(/(?<![\w-])(?:max-)?width\s*:[^;]*;?\s*/gi, "")
                 // Clean up empty style attributes left behind
                 .replace(/style="\s*"/gi, ""),
             }}
