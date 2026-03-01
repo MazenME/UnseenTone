@@ -28,10 +28,10 @@ export default function Navbar() {
     null;
 
   const handleSignOut = async () => {
-    await signOut();
     setMenuOpen(false);
+    // signOut() now clears state instantly (fire-and-forget network call)
+    await signOut();
     router.push("/");
-    router.refresh();
   };
 
   return (

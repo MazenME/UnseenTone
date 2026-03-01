@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useEffect, useState, useCallback } from "react";
+import { createContext, useContext, useEffect, useState, useCallback, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type { User } from "@supabase/supabase-js";
 
@@ -55,15 +55,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(getCachedProfile);
   const [loading, setLoading] = useState(true);
+  const signingOut = useRef(false);
   const supabase = createClient();
 
   const fetchProfile = useCallback(async (authUser: User, isNewSignup = false) => {
+    // Don't fetch profile if we're in the middle of signing out
+    if (signingOut.current) return null;
+
     let data: UserProfile | null = null;
 
     if (isNewSignup) {
       // For new signups, the DB trigger may not have fired yet — retry a few times
       let retries = 0;
       while (retries < 3) {
+        if (signingOut.current) return null;
         const { data: row } = await supabase
           .from("users_profile")
           .select("id, email, display_name, avatar_url, role, is_banned")
@@ -74,7 +79,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         await new Promise((r) => setTimeout(r, 500));
       }
     } else {
-      // Normal load — single fast query, no retries
       const { data: row } = await supabase
         .from("users_profile")
         .select("id, email, display_name, avatar_url, role, is_banned")
@@ -102,7 +106,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
       }
 
-      // Single update call if needed (instead of two sequential)
       if (Object.keys(updates).length > 0) {
         supabase.from("users_profile").update(updates).eq("id", authUser.id).then(() => {});
       }
@@ -113,18 +116,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
+    // Use getUser() for secure server-validated session check
     const init = async () => {
       const {
-        data: { session },
-      } = await supabase.auth.getSession();
+        data: { user: authUser },
+      } = await supabase.auth.getUser();
 
-      const authUser = session?.user ?? null;
       setUser(authUser);
-      // Show user immediately — profile loads in background
       setLoading(false);
 
       if (authUser) {
-        // If we have a cached profile for this user, use it instantly
         const cached = getCachedProfile();
         if (cached && cached.id === authUser.id) {
           setProfile(cached);
@@ -136,7 +137,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setCachedProfile(p);
         }
       } else {
-        // No user — clear cached profile
         setProfile(null);
         setCachedProfile(null);
       }
@@ -146,15 +146,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (_event, session) => {
+    } = supabase.auth.onAuthStateChange(async (event, session) => {
+      // Skip processing if we're signing out — we handle that optimistically
+      if (signingOut.current) return;
+
       const authUser = session?.user ?? null;
       setUser(authUser);
       setLoading(false);
 
       if (authUser) {
-        const isNewSignup = _event === "SIGNED_IN";
+        const isNewSignup = event === "SIGNED_IN";
         const p = await fetchProfile(authUser, isNewSignup);
-        if (p) {
+        if (p && !signingOut.current) {
           setProfile(p);
           setCachedProfile(p);
         }
@@ -170,19 +173,44 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const signOut = async () => {
-    await supabase.auth.signOut();
+  const signOut = useCallback(async () => {
+    // Set signing out flag FIRST to prevent auth listener from re-fetching
+    signingOut.current = true;
+
+    // Clear state immediately for instant UI response
     setUser(null);
     setProfile(null);
     setCachedProfile(null);
-  };
 
-  const refreshProfile = async () => {
+    // Clear custom theme/font caches so they don't flash on re-login
+    try {
+      localStorage.removeItem("kathion-custom-themes-cache");
+      localStorage.removeItem("kathion-custom-fonts-cache");
+    } catch { /* empty */ }
+
+    // Remove injected custom theme CSS and font links
+    try {
+      const styleEl = document.getElementById("custom-themes-css");
+      if (styleEl) styleEl.textContent = "";
+      document.querySelectorAll('link[id^="custom-font-"]').forEach((el) => el.remove());
+    } catch { /* empty */ }
+
+    // Fire-and-forget the actual sign out
+    supabase.auth.signOut().finally(() => {
+      signingOut.current = false;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const refreshProfile = useCallback(async () => {
     if (user) {
       const p = await fetchProfile(user);
-      setProfile(p);
+      if (p) {
+        setProfile(p);
+        setCachedProfile(p);
+      }
     }
-  };
+  }, [user, fetchProfile]);
 
   return (
     <AuthContext.Provider value={{ user, profile, loading, signOut, refreshProfile }}>

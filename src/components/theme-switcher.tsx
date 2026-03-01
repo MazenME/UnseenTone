@@ -1,7 +1,7 @@
 "use client";
 
 import { useTheme } from "next-themes";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/components/providers/auth-provider";
@@ -41,21 +41,59 @@ const BUILTIN_THEMES: ThemeEntry[] = [
   },
 ];
 
+const CUSTOM_THEMES_CACHE_KEY = "kathion-custom-themes-cache";
+
+function getCachedCustomThemes(): { themes: ThemeEntry[]; css: string } | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const cached = localStorage.getItem(CUSTOM_THEMES_CACHE_KEY);
+    return cached ? JSON.parse(cached) : null;
+  } catch { return null; }
+}
+
+function setCachedCustomThemes(themes: ThemeEntry[], css: string) {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(CUSTOM_THEMES_CACHE_KEY, JSON.stringify({ themes, css }));
+  } catch { /* empty */ }
+}
+
+function injectCustomThemeCSS(css: string) {
+  if (!css) return;
+  let styleEl = document.getElementById("custom-themes-css");
+  if (!styleEl) {
+    styleEl = document.createElement("style");
+    styleEl.id = "custom-themes-css";
+    document.head.appendChild(styleEl);
+  }
+  styleEl.textContent = css;
+}
+
 export default function ThemeSwitcher() {
   const { theme, setTheme } = useTheme();
   const { user } = useAuth();
   const [open, setOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
-  const [allThemes, setAllThemes] = useState<ThemeEntry[]>(BUILTIN_THEMES);
+  const [allThemes, setAllThemes] = useState<ThemeEntry[]>(() => {
+    // Initialize with cached custom themes if available
+    const cached = getCachedCustomThemes();
+    return cached ? [...BUILTIN_THEMES, ...cached.themes] : BUILTIN_THEMES;
+  });
+  const lastFetchedUserId = useRef<string | null>(null);
 
   useEffect(() => {
     setMounted(true);
+    // Re-inject cached CSS on mount (it may have been lost during navigation)
+    const cached = getCachedCustomThemes();
+    if (cached?.css) {
+      injectCustomThemeCSS(cached.css);
+    }
   }, []);
 
   // Load custom themes only when user is logged in
   useEffect(() => {
     if (!user) {
-      // Not logged in → only builtin themes
+      // Not logged in → only builtin themes, but keep cache for next login
       setAllThemes(BUILTIN_THEMES);
 
       // Remove injected custom theme CSS
@@ -66,7 +104,20 @@ export default function ThemeSwitcher() {
       if (theme && !BUILTIN_THEMES.some((t) => t.id === theme)) {
         setTheme("the-void");
       }
+
+      lastFetchedUserId.current = null;
       return;
+    }
+
+    // Skip if we already fetched for this user
+    if (lastFetchedUserId.current === user.id) return;
+    lastFetchedUserId.current = user.id;
+
+    // Restore from cache instantly while fetching in background
+    const cached = getCachedCustomThemes();
+    if (cached && cached.themes.length > 0) {
+      setAllThemes([...BUILTIN_THEMES, ...cached.themes]);
+      injectCustomThemeCSS(cached.css);
     }
 
     const supabase = createClient();
@@ -84,14 +135,6 @@ export default function ThemeSwitcher() {
           }));
 
           setAllThemes([...BUILTIN_THEMES, ...custom]);
-
-          // Inject CSS custom properties for each custom theme
-          let styleEl = document.getElementById("custom-themes-css");
-          if (!styleEl) {
-            styleEl = document.createElement("style");
-            styleEl.id = "custom-themes-css";
-            document.head.appendChild(styleEl);
-          }
 
           const css = data
             .map(
@@ -112,7 +155,8 @@ export default function ThemeSwitcher() {
             )
             .join("\n");
 
-          styleEl.textContent = css;
+          injectCustomThemeCSS(css);
+          setCachedCustomThemes(custom, css);
         }
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps

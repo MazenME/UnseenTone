@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/components/providers/auth-provider";
@@ -32,6 +32,7 @@ const BUILTIN_FONTS: FontOption[] = [
 ];
 
 const STORAGE_KEY = "kathion-reader-settings";
+const CUSTOM_FONTS_CACHE_KEY = "kathion-custom-fonts-cache";
 
 function loadSettings(): ReaderSettings {
   if (typeof window === "undefined") return DEFAULT_SETTINGS;
@@ -40,6 +41,39 @@ function loadSettings(): ReaderSettings {
     if (stored) return { ...DEFAULT_SETTINGS, ...JSON.parse(stored) };
   } catch { /* empty */ }
   return DEFAULT_SETTINGS;
+}
+
+interface CachedFontData {
+  fonts: FontOption[];
+  fontUrls: { id: string; url: string }[];
+}
+
+function getCachedCustomFonts(): CachedFontData | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const cached = localStorage.getItem(CUSTOM_FONTS_CACHE_KEY);
+    return cached ? JSON.parse(cached) : null;
+  } catch { return null; }
+}
+
+function setCachedCustomFonts(data: CachedFontData) {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(CUSTOM_FONTS_CACHE_KEY, JSON.stringify(data));
+  } catch { /* empty */ }
+}
+
+function injectFontLinks(fontUrls: { id: string; url: string }[]) {
+  fontUrls.forEach(({ id, url }) => {
+    const linkId = `custom-font-${id}`;
+    if (!document.getElementById(linkId)) {
+      const link = document.createElement("link");
+      link.id = linkId;
+      link.rel = "stylesheet";
+      link.href = url;
+      document.head.appendChild(link);
+    }
+  });
 }
 
 export function useReaderSettings() {
@@ -75,8 +109,21 @@ interface ReaderControlsProps {
 
 export default function ReaderControls({ settings, updateSettings, resetSettings }: ReaderControlsProps) {
   const [open, setOpen] = useState(false);
-  const [allFonts, setAllFonts] = useState<FontOption[]>(BUILTIN_FONTS);
+  const [allFonts, setAllFonts] = useState<FontOption[]>(() => {
+    // Initialize with cached custom fonts if available
+    const cached = getCachedCustomFonts();
+    return cached ? [...BUILTIN_FONTS, ...cached.fonts] : BUILTIN_FONTS;
+  });
   const { user } = useAuth();
+  const lastFetchedUserId = useRef<string | null>(null);
+
+  // Restore cached font links on mount
+  useEffect(() => {
+    const cached = getCachedCustomFonts();
+    if (cached?.fontUrls) {
+      injectFontLinks(cached.fontUrls);
+    }
+  }, []);
 
   // Load custom fonts only when user is logged in
   useEffect(() => {
@@ -91,7 +138,20 @@ export default function ReaderControls({ settings, updateSettings, resetSettings
       if (settings.fontFamily && !BUILTIN_FONTS.some((f) => f.value === settings.fontFamily)) {
         updateSettings({ fontFamily: BUILTIN_FONTS[0].value });
       }
+
+      lastFetchedUserId.current = null;
       return;
+    }
+
+    // Skip if we already fetched for this user
+    if (lastFetchedUserId.current === user.id) return;
+    lastFetchedUserId.current = user.id;
+
+    // Restore from cache instantly
+    const cached = getCachedCustomFonts();
+    if (cached && cached.fonts.length > 0) {
+      setAllFonts([...BUILTIN_FONTS, ...cached.fonts]);
+      injectFontLinks(cached.fontUrls);
     }
 
     const supabase = createClient();
@@ -108,19 +168,12 @@ export default function ReaderControls({ settings, updateSettings, resetSettings
           }));
           setAllFonts([...BUILTIN_FONTS, ...custom]);
 
-          // Load Google Fonts / external font URLs
-          data.forEach((f) => {
-            if (f.font_url) {
-              const linkId = `custom-font-${f.id}`;
-              if (!document.getElementById(linkId)) {
-                const link = document.createElement("link");
-                link.id = linkId;
-                link.rel = "stylesheet";
-                link.href = f.font_url;
-                document.head.appendChild(link);
-              }
-            }
-          });
+          const fontUrls = data
+            .filter((f) => f.font_url)
+            .map((f) => ({ id: f.id, url: f.font_url }));
+
+          injectFontLinks(fontUrls);
+          setCachedCustomFonts({ fonts: custom, fontUrls });
         }
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
