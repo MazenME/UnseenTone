@@ -8,9 +8,11 @@ export async function getNovelFavouriteState(
   novelId: string
 ): Promise<{ favourited: boolean; count: number }> {
   const supabase = await createClient();
+  // Fast path: read session from cookie (no network call) for read-only operation
   const {
-    data: { user },
-  } = await supabase.auth.getUser();
+    data: { session },
+  } = await supabase.auth.getSession();
+  const user = session?.user ?? null;
 
   // Parallelize count + user check
   const queries: PromiseLike<any>[] = [
@@ -89,9 +91,11 @@ export async function getNovelRatingState(
   novelId: string
 ): Promise<{ average: number; count: number; userRating: number | null }> {
   const supabase = await createClient();
+  // Fast path: read session from cookie (no network call) for read-only operation
   const {
-    data: { user },
-  } = await supabase.auth.getUser();
+    data: { session },
+  } = await supabase.auth.getSession();
+  const user = session?.user ?? null;
 
   // Parallelize ratings fetch + user rating check
   const queries: PromiseLike<any>[] = [

@@ -29,9 +29,9 @@ export default function Navbar() {
 
   const handleSignOut = async () => {
     setMenuOpen(false);
-    // signOut() now clears state instantly (fire-and-forget network call)
     await signOut();
     router.push("/");
+    router.refresh();
   };
 
   return (

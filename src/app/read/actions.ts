@@ -7,12 +7,22 @@ import { commentRateLimit, likeRateLimit, bookmarkRateLimit } from "@/lib/redis"
 
 // ── Helpers ──────────────────────────────────────────────────
 
+/** Secure auth check — validates JWT against Supabase server. Use for mutations. */
 async function getUser() {
   const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
   return { supabase, user };
+}
+
+/** Fast auth check — reads session from cookie only (no network call). Use for read-only actions. */
+async function getSessionUser() {
+  const supabase = await createClient();
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+  return { supabase, user: session?.user ?? null };
 }
 
 async function getClientIp(): Promise<string> {
@@ -60,7 +70,7 @@ export interface CommentRow {
 }
 
 export async function getChapterComments(chapterId: string): Promise<CommentRow[]> {
-  const { supabase, user } = await getUser();
+  const { supabase, user } = await getSessionUser();
   const { data, error } = await supabase
     .from("comments")
     .select("id, body, created_at, user_id, parent_id, users_profile(id, display_name, email, avatar_url)")
@@ -243,7 +253,7 @@ export async function toggleCommentReaction(
 export async function getChapterLikeState(
   chapterId: string
 ): Promise<{ count: number; liked: boolean }> {
-  const { supabase, user } = await getUser();
+  const { supabase, user } = await getSessionUser();
 
   // Parallelize count + user-like check
   const queries: PromiseLike<any>[] = [
@@ -314,7 +324,7 @@ export async function toggleLike(
 export async function getBookmarkState(
   chapterId: string
 ): Promise<{ bookmarked: boolean }> {
-  const { supabase, user } = await getUser();
+  const { supabase, user } = await getSessionUser();
   if (!user) return { bookmarked: false };
 
   const { data, error } = await supabase
@@ -377,7 +387,7 @@ export async function toggleBookmark(
 export async function getChapterRatingState(
   chapterId: string
 ): Promise<{ average: number; count: number; userRating: number | null }> {
-  const { supabase, user } = await getUser();
+  const { supabase, user } = await getSessionUser();
 
   // Parallelize ratings fetch + user rating check
   const queries: PromiseLike<any>[] = [

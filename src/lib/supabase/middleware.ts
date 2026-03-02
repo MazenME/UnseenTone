@@ -25,10 +25,19 @@ export async function updateSession(request: NextRequest) {
     }
   );
 
-  // IMPORTANT: Do not remove this — it refreshes the auth token
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  // Skip the network call to Supabase Auth if there are no auth cookies
+  // (anonymous visitors) — saves ~50-200ms per request for unauthenticated users
+  const hasAuthCookies = request.cookies
+    .getAll()
+    .some((c) => c.name.startsWith("sb-"));
+
+  let user = null;
+  if (hasAuthCookies) {
+    const {
+      data: { user: authUser },
+    } = await supabase.auth.getUser();
+    user = authUser;
+  }
 
   return { supabase, user, supabaseResponse };
 }

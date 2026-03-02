@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useAuth } from "@/components/providers/auth-provider";
 import { motion } from "framer-motion";
 import { useState } from "react";
@@ -48,6 +48,7 @@ const NAV_ITEMS = [
 export default function DashboardShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const { profile, signOut } = useAuth();
+  const router = useRouter();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   return (
@@ -118,7 +119,11 @@ export default function DashboardShell({ children }: { children: React.ReactNode
             </div>
           </div>
           <button
-            onClick={signOut}
+            onClick={async () => {
+              await signOut();
+              router.push("/");
+              router.refresh();
+            }}
             className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm text-fg-muted hover:text-red-400 hover:bg-red-400/10 transition-colors cursor-pointer"
           >
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>

@@ -31,24 +31,21 @@ export async function GET(request: Request) {
       }
     );
 
-    const { error } = await supabase.auth.exchangeCodeForSession(code);
+    const { data, error } = await supabase.auth.exchangeCodeForSession(code);
 
-    if (!error) {
-      // Update last IP address
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+    if (!error && data.session) {
+      // Use the user from the session — no need for a second getUser() call
+      const user = data.session.user;
+      const forwardedFor = request.headers.get("x-forwarded-for");
+      const ip = forwardedFor ? forwardedFor.split(",")[0].trim() : null;
 
-      if (user) {
-        const forwardedFor = request.headers.get("x-forwarded-for");
-        const ip = forwardedFor ? forwardedFor.split(",")[0].trim() : null;
-
-        if (ip) {
-          await supabase
-            .from("users_profile")
-            .update({ last_ip_address: ip })
-            .eq("id", user.id);
-        }
+      if (ip) {
+        // Fire-and-forget — don't block redirect for IP logging
+        supabase
+          .from("users_profile")
+          .update({ last_ip_address: ip })
+          .eq("id", user.id)
+          .then(() => {});
       }
 
       return NextResponse.redirect(`${origin}${redirectTo}`);

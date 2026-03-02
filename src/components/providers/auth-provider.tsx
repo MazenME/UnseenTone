@@ -56,6 +56,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [profile, setProfile] = useState<UserProfile | null>(getCachedProfile);
   const [loading, setLoading] = useState(true);
   const signingOut = useRef(false);
+  const initDone = useRef(false);
   const supabase = createClient();
 
   const fetchProfile = useCallback(async (authUser: User, isNewSignup = false) => {
@@ -140,6 +141,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setProfile(null);
         setCachedProfile(null);
       }
+
+      initDone.current = true;
     };
 
     init();
@@ -149,6 +152,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } = supabase.auth.onAuthStateChange(async (event, session) => {
       // Skip processing if we're signing out — we handle that optimistically
       if (signingOut.current) return;
+
+      // Skip INITIAL_SESSION — init() already handled it
+      if (event === "INITIAL_SESSION") return;
 
       const authUser = session?.user ?? null;
       setUser(authUser);
@@ -195,10 +201,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       document.querySelectorAll('link[id^="custom-font-"]').forEach((el) => el.remove());
     } catch { /* empty */ }
 
-    // Fire-and-forget the actual sign out
-    supabase.auth.signOut().finally(() => {
+    // Await the actual sign out so cookies/session are fully cleared
+    try {
+      await supabase.auth.signOut();
+    } catch {
+      // Ignore network errors — local state is already cleared
+    } finally {
       signingOut.current = false;
-    });
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
