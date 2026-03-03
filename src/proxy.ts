@@ -39,7 +39,9 @@ export async function proxy(request: NextRequest) {
         return NextResponse.redirect(bannedUrl);
       }
 
-      if (profile?.role !== "admin") {
+      const role = profile?.role;
+      const isAdmin = role === "admin" || role === "super_admin" || role === "novel_admin";
+      if (!isAdmin) {
         const homeUrl = request.nextUrl.clone();
         homeUrl.pathname = "/";
         return NextResponse.redirect(homeUrl);

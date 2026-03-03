@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 interface NovelAnalytics {
   id: string;
@@ -30,29 +31,72 @@ interface NovelAnalytics {
 
 async function getAnalytics() {
   const supabase = await createClient();
+  const admin = createAdminClient();
 
-  // ─── Phase 1: ALL independent queries in parallel (7 queries) ───
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  const { data: profile } = await supabase
+    .from("users_profile")
+    .select("role")
+    .eq("id", user?.id)
+    .single();
+
+  const role = profile?.role === "admin" ? "super_admin" : profile?.role || "reader";
+
+  let allowedNovelIds: string[] | null = null;
+  if (role === "novel_admin" && user?.id) {
+    const { data: rows } = await admin.from("novel_admins").select("novel_id").eq("admin_id", user.id);
+    allowedNovelIds = (rows || []).map((r: any) => r.novel_id);
+    if (!allowedNovelIds.length) {
+      return {
+        role,
+        totalUsers: 0,
+        totalNovels: 0,
+        totalReads: 0,
+        totalComments: 0,
+        novelAnalytics: [],
+      };
+    }
+  }
+
+  // ─── Phase 1: Independent queries in parallel ───
   const [
     { count: totalUsers },
     { data: novels },
-    { count: totalComments },
-    { data: bannedUsersData },
     { data: allNovelRatings },
     { data: allChapterRatingsRaw },
-    { data: allChapters },
   ] = await Promise.all([
-    supabase.from("users_profile").select("*", { count: "exact", head: true }),
-    supabase.from("novels").select("id, title, slug, status, total_reads, created_at, cover_url"),
-    supabase.from("comments").select("*", { count: "exact", head: true }).eq("is_deleted", false),
-    supabase.from("users_profile").select("*", { count: "exact", head: true }).eq("is_banned", true),
-    supabase.from("novel_ratings").select("novel_id, rating"),
-    supabase.from("chapter_ratings").select("chapter_id, rating, chapters(novel_id)"),
-    supabase
-      .from("chapters")
-      .select("id, novel_id, chapter_number, title, reads, word_count, created_at")
-      .eq("is_published", true)
-      .order("chapter_number", { ascending: true }),
+    role === "novel_admin" ? { count: null } : supabase.from("users_profile").select("*", { count: "exact", head: true }),
+    role === "novel_admin" && allowedNovelIds
+      ? supabase
+          .from("novels")
+          .select("id, title, slug, status, total_reads, created_at, cover_url")
+          .in("id", allowedNovelIds)
+          .order("created_at", { ascending: false })
+      : supabase
+          .from("novels")
+          .select("id, title, slug, status, total_reads, created_at, cover_url")
+          .order("created_at", { ascending: false }),
+    role === "novel_admin" && allowedNovelIds
+      ? supabase.from("novel_ratings").select("novel_id, rating").in("novel_id", allowedNovelIds)
+      : supabase.from("novel_ratings").select("novel_id, rating"),
+    role === "novel_admin" && allowedNovelIds
+      ? supabase.from("chapter_ratings").select("chapter_id, rating, chapters(novel_id)").in("chapters.novel_id", allowedNovelIds)
+      : supabase.from("chapter_ratings").select("chapter_id, rating, chapters(novel_id)"),
   ]);
+
+  const chapterQuery = supabase
+    .from("chapters")
+    .select("id, novel_id, chapter_number, title, reads, word_count, created_at")
+    .eq("is_published", true)
+    .order("chapter_number", { ascending: true });
+
+  const { data: allChapters } =
+    role === "novel_admin" && allowedNovelIds
+      ? await chapterQuery.in("novel_id", allowedNovelIds)
+      : await chapterQuery;
 
   const totalReads = (novels || []).reduce((sum, n) => sum + (n.total_reads || 0), 0);
 
@@ -133,63 +177,101 @@ async function getAnalytics() {
     };
   });
 
+  const totalComments = novelAnalytics.reduce((sum, n) => sum + n.total_comments, 0);
+
   return {
+    role,
     totalUsers: totalUsers || 0,
     totalNovels: novels?.length || 0,
     totalReads,
-    totalComments: totalComments || 0,
-    bannedUsers: bannedUsersData || 0,
+    totalComments,
     novelAnalytics,
   };
 }
 
 export default async function DashboardPage() {
-  const { totalUsers, totalNovels, totalReads, totalComments, novelAnalytics } =
+  const { role, totalUsers, totalNovels, totalReads, totalComments, novelAnalytics } =
     await getAnalytics();
 
-  const stats = [
-    {
-      label: "Total Reads",
-      value: totalReads.toLocaleString(),
-      icon: (
-        <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
-          <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-        </svg>
-      ),
-      color: "text-purple-400 bg-purple-400/10",
-    },
-    {
-      label: "Total Users",
-      value: totalUsers.toLocaleString(),
-      icon: (
-        <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 018.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0111.964-3.07M12 6.375a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zm8.25 2.25a2.625 2.625 0 11-5.25 0 2.625 2.625 0 015.25 0z" />
-        </svg>
-      ),
-      color: "text-cyan-400 bg-cyan-400/10",
-    },
-    {
-      label: "Novels",
-      value: totalNovels.toLocaleString(),
-      icon: (
-        <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25" />
-        </svg>
-      ),
-      color: "text-orange-400 bg-orange-400/10",
-    },
-    {
-      label: "Comments",
-      value: totalComments.toLocaleString(),
-      icon: (
-        <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 01.865-.501 48.172 48.172 0 003.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0012 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018z" />
-        </svg>
-      ),
-      color: "text-green-400 bg-green-400/10",
-    },
-  ];
+  const stats = (
+    role === "novel_admin"
+      ? [
+          {
+            label: "Total Reads",
+            value: totalReads.toLocaleString(),
+            icon: (
+              <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+              </svg>
+            ),
+            color: "text-purple-400 bg-purple-400/10",
+          },
+          {
+            label: "Novels",
+            value: totalNovels.toLocaleString(),
+            icon: (
+              <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25" />
+              </svg>
+            ),
+            color: "text-orange-400 bg-orange-400/10",
+          },
+          {
+            label: "Comments",
+            value: totalComments.toLocaleString(),
+            icon: (
+              <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 01.865-.501 48.172 48.172 0 003.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0012 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018z" />
+              </svg>
+            ),
+            color: "text-green-400 bg-green-400/10",
+          },
+        ]
+      : [
+          {
+            label: "Total Reads",
+            value: totalReads.toLocaleString(),
+            icon: (
+              <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+              </svg>
+            ),
+            color: "text-purple-400 bg-purple-400/10",
+          },
+          {
+            label: "Total Users",
+            value: (totalUsers || 0).toLocaleString(),
+            icon: (
+              <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 018.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0111.964-3.07M12 6.375a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zm8.25 2.25a2.625 2.625 0 11-5.25 0 2.625 2.625 0 015.25 0z" />
+              </svg>
+            ),
+            color: "text-cyan-400 bg-cyan-400/10",
+          },
+          {
+            label: "Novels",
+            value: totalNovels.toLocaleString(),
+            icon: (
+              <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25" />
+              </svg>
+            ),
+            color: "text-orange-400 bg-orange-400/10",
+          },
+          {
+            label: "Comments",
+            value: totalComments.toLocaleString(),
+            icon: (
+              <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 01.865-.501 48.172 48.172 0 003.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0012 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018z" />
+              </svg>
+            ),
+            color: "text-green-400 bg-green-400/10",
+          },
+        ]
+  );
 
   return (
     <div className="space-y-8">

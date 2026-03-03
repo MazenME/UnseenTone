@@ -4,28 +4,64 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { revalidatePath } from "next/cache";
 
-// ── Verify the caller is an admin ────────────────────────────
-async function requireAdmin() {
+type AdminRole = "super_admin" | "novel_admin" | "reader";
+
+function normalizeRole(role?: string | null): AdminRole {
+  if (role === "admin") return "super_admin"; // legacy value
+  if (role === "super_admin") return "super_admin";
+  if (role === "novel_admin") return "novel_admin";
+  return "reader";
+}
+
+async function requireAdminWithScope() {
   const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) throw new Error("Unauthorized");
 
-  // Fast path: if the middleware already validated admin via DB,
-  // we can trust the user_metadata role (set by trigger) for this request
-  const metaRole = user.user_metadata?.role || user.app_metadata?.role;
-  if (metaRole === "admin") return user;
-
-  // Fallback: verify against DB
   const { data: profile } = await supabase
     .from("users_profile")
     .select("role")
     .eq("id", user.id)
     .single();
 
-  if (profile?.role !== "admin") throw new Error("Forbidden");
-  return user;
+  const role = normalizeRole(profile?.role);
+  if (role === "reader") throw new Error("Forbidden");
+
+  const admin = createAdminClient();
+  let allowedNovelIds: string[] = [];
+
+  if (role === "novel_admin") {
+    const { data: rows } = await admin
+      .from("novel_admins")
+      .select("novel_id")
+      .eq("admin_id", user.id);
+    allowedNovelIds = (rows || []).map((r: any) => r.novel_id);
+  }
+
+  const isSuperAdmin = role === "super_admin";
+
+  return { user, role, isSuperAdmin, allowedNovelIds, admin };
+}
+
+async function requireSuperAdmin() {
+  const ctx = await requireAdminWithScope();
+  if (!ctx.isSuperAdmin) throw new Error("Forbidden");
+  return ctx;
+}
+
+async function ensureCommentInScope(commentId: string, allowedNovelIds: string[]) {
+  if (!allowedNovelIds.length) throw new Error("Forbidden");
+  const admin = createAdminClient();
+  const { data: comment } = await admin
+    .from("comments")
+    .select("id, chapter_id, chapters!inner(novel_id)")
+    .eq("id", commentId)
+    .single();
+
+  const novelId = (comment as any)?.chapters?.novel_id;
+  if (!novelId || !allowedNovelIds.includes(novelId)) throw new Error("Forbidden");
 }
 
 // ── Fetch comments for moderation ────────────────────────────
@@ -37,8 +73,7 @@ export async function getComments(opts: {
   novelId?: string;
   chapterId?: string;
 }) {
-  await requireAdmin();
-  const admin = createAdminClient();
+  const { isSuperAdmin, allowedNovelIds, admin } = await requireAdminWithScope();
 
   const page = opts.page ?? 1;
   const pageSize = opts.pageSize ?? 20;
@@ -66,6 +101,9 @@ export async function getComments(opts: {
     query = query.eq("chapter_id", opts.chapterId);
   } else if (opts.novelId) {
     query = query.eq("chapters.novel_id", opts.novelId);
+  } else if (!isSuperAdmin) {
+    if (!allowedNovelIds.length) return { comments: [], total: 0 };
+    query = query.in("chapters.novel_id", allowedNovelIds);
   }
 
   const { data, count, error } = await query;
@@ -78,15 +116,21 @@ export async function getComments(opts: {
 export async function getNovelsWithChapters(): Promise<
   { id: string; title: string; chapters: { id: string; title: string; chapter_number: number }[] }[]
 > {
-  await requireAdmin();
-  const admin = createAdminClient();
+  const { isSuperAdmin, allowedNovelIds, admin } = await requireAdminWithScope();
 
-  // Fetch novels and ALL chapters in parallel (no N+1)
-  const [{ data: novels }, { data: allChapters }] = await Promise.all([
-    admin.from("novels").select("id, title").order("created_at", { ascending: false }),
-    admin.from("chapters").select("id, title, chapter_number, novel_id").order("chapter_number", { ascending: true }),
-  ]);
+  let novelsQuery = admin.from("novels").select("id, title").order("created_at", { ascending: false });
+  let chaptersQuery = admin
+    .from("chapters")
+    .select("id, title, chapter_number, novel_id")
+    .order("chapter_number", { ascending: true });
 
+  if (!isSuperAdmin) {
+    if (!allowedNovelIds.length) return [];
+    novelsQuery = novelsQuery.in("id", allowedNovelIds);
+    chaptersQuery = chaptersQuery.in("novel_id", allowedNovelIds);
+  }
+
+  const [{ data: novels }, { data: allChapters }] = await Promise.all([novelsQuery, chaptersQuery]);
   if (!novels || novels.length === 0) return [];
 
   // Group chapters by novel_id in JS
@@ -101,8 +145,8 @@ export async function getNovelsWithChapters(): Promise<
 
 // ── Delete a comment (soft-delete) ───────────────────────────
 export async function deleteComment(commentId: string) {
-  await requireAdmin();
-  const admin = createAdminClient();
+  const { isSuperAdmin, allowedNovelIds, admin } = await requireAdminWithScope();
+  if (!isSuperAdmin) await ensureCommentInScope(commentId, allowedNovelIds);
 
   const { error } = await admin
     .from("comments")
@@ -117,8 +161,8 @@ export async function deleteComment(commentId: string) {
 
 // ── Restore a soft-deleted comment ───────────────────────────
 export async function restoreComment(commentId: string) {
-  await requireAdmin();
-  const admin = createAdminClient();
+  const { isSuperAdmin, allowedNovelIds, admin } = await requireAdminWithScope();
+  if (!isSuperAdmin) await ensureCommentInScope(commentId, allowedNovelIds);
 
   const { error } = await admin
     .from("comments")
@@ -133,8 +177,8 @@ export async function restoreComment(commentId: string) {
 
 // ── Hard-delete a comment permanently ────────────────────────
 export async function hardDeleteComment(commentId: string) {
-  await requireAdmin();
-  const admin = createAdminClient();
+  const { isSuperAdmin, allowedNovelIds, admin } = await requireAdminWithScope();
+  if (!isSuperAdmin) await ensureCommentInScope(commentId, allowedNovelIds);
 
   const { error } = await admin
     .from("comments")
@@ -149,7 +193,7 @@ export async function hardDeleteComment(commentId: string) {
 
 // ── Ban a user ───────────────────────────────────────────────
 export async function banUser(userId: string, reason?: string) {
-  await requireAdmin();
+  await requireSuperAdmin();
   const admin = createAdminClient();
 
   const { error } = await admin
@@ -168,7 +212,7 @@ export async function banUser(userId: string, reason?: string) {
 
 // ── Unban a user ─────────────────────────────────────────────
 export async function unbanUser(userId: string) {
-  await requireAdmin();
+  await requireSuperAdmin();
   const admin = createAdminClient();
 
   const { error } = await admin
@@ -192,7 +236,7 @@ export async function getUsers(opts: {
   filter?: "all" | "banned" | "admin";
   search?: string;
 }) {
-  await requireAdmin();
+  await requireSuperAdmin();
   const admin = createAdminClient();
 
   const page = opts.page ?? 1;
@@ -211,7 +255,7 @@ export async function getUsers(opts: {
   if (opts.filter === "banned") {
     query = query.eq("is_banned", true);
   } else if (opts.filter === "admin") {
-    query = query.eq("role", "admin");
+    query = query.in("role", ["super_admin", "novel_admin", "admin"]);
   }
 
   if (opts.search) {
@@ -226,7 +270,7 @@ export async function getUsers(opts: {
 
 // ── Delete a user entirely (removes from auth.users, cascades to profile) ──
 export async function deleteUser(userId: string) {
-  await requireAdmin();
+  await requireSuperAdmin();
   const admin = createAdminClient();
 
   // First soft-delete all their comments
@@ -246,7 +290,7 @@ export async function deleteUser(userId: string) {
 
 // ── Delete all comments from a specific IP ───────────────────
 export async function deleteCommentsByIp(ipAddress: string) {
-  await requireAdmin();
+  await requireSuperAdmin();
   const admin = createAdminClient();
 
   const { error } = await admin
@@ -305,7 +349,7 @@ export async function createCustomTheme(fields: {
   content_link: string;
   color_scheme: string;
 }) {
-  await requireAdmin();
+  await requireSuperAdmin();
   const supabase = await createClient();
 
   const name = fields.label
@@ -337,7 +381,7 @@ export async function createCustomTheme(fields: {
 }
 
 export async function deleteCustomTheme(id: string) {
-  await requireAdmin();
+  await requireSuperAdmin();
   const supabase = await createClient();
   const { error } = await supabase.from("custom_themes").delete().eq("id", id);
   if (error) return { error: error.message };
@@ -365,7 +409,7 @@ export async function getCustomFonts(): Promise<CustomFont[]> {
 }
 
 export async function createCustomFont(font: { name: string; font_family: string; font_url?: string }) {
-  await requireAdmin();
+  await requireSuperAdmin();
   const supabase = await createClient();
 
   const row: Record<string, string> = {
@@ -382,10 +426,63 @@ export async function createCustomFont(font: { name: string; font_family: string
 }
 
 export async function deleteCustomFont(id: string) {
-  await requireAdmin();
+  await requireSuperAdmin();
   const supabase = await createClient();
   const { error } = await supabase.from("custom_fonts").delete().eq("id", id);
   if (error) return { error: error.message };
+  revalidatePath("/dashboard/moderation");
+  return { success: true };
+}
+
+// ── Admin role & scope management (super-admin only) ──────────
+export async function listNovels() {
+  await requireSuperAdmin();
+  const admin = createAdminClient();
+  const { data, error } = await admin.from("novels").select("id, title").order("title", { ascending: true });
+  if (error) return { novels: [], error: error.message };
+  return { novels: data || [] };
+}
+
+export async function getNovelAssignments(userId: string) {
+  await requireSuperAdmin();
+  const admin = createAdminClient();
+  const { data, error } = await admin.from("novel_admins").select("novel_id").eq("admin_id", userId);
+  if (error) return { novelIds: [], error: error.message };
+  return { novelIds: (data || []).map((r: any) => r.novel_id) };
+}
+
+export async function setAdminRole(params: {
+  userId: string;
+  role: "super_admin" | "novel_admin" | "reader";
+  novelIds?: string[];
+}) {
+  const { user: actingUser } = await requireSuperAdmin();
+  const admin = createAdminClient();
+
+  if (params.userId === actingUser.id && params.role !== "super_admin") {
+    return { error: "You cannot demote yourself" };
+  }
+
+  const roleValue = params.role;
+
+  // Update profile role
+  const { error: updateError } = await admin
+    .from("users_profile")
+    .update({ role: roleValue })
+    .eq("id", params.userId);
+  if (updateError) return { error: updateError.message };
+
+  // Reset novel assignments then re-insert if limited admin
+  await admin.from("novel_admins").delete().eq("admin_id", params.userId);
+
+  if (roleValue === "novel_admin") {
+    const novelIds = params.novelIds || [];
+    if (!novelIds.length) return { error: "Select at least one novel" };
+    const rows = novelIds.map((nid) => ({ admin_id: params.userId, novel_id: nid }));
+    const { error: insertError } = await admin.from("novel_admins").upsert(rows, { onConflict: "admin_id,novel_id" });
+    if (insertError) return { error: insertError.message };
+  }
+
   revalidatePath("/dashboard/moderation");
   return { success: true };
 }

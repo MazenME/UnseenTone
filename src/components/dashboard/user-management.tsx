@@ -2,7 +2,16 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { getUsers, banUser, unbanUser, deleteUser } from "@/app/dashboard/moderation/actions";
+import {
+  getUsers,
+  banUser,
+  unbanUser,
+  deleteUser,
+  listNovels,
+  getNovelAssignments,
+  setAdminRole,
+} from "@/app/dashboard/moderation/actions";
+import { useAuth } from "@/components/providers/auth-provider";
 
 interface User {
   id: string;
@@ -16,9 +25,14 @@ interface User {
   created_at: string;
 }
 
+type NovelRef = { id: string; title: string };
+
 type FilterType = "all" | "banned" | "admin";
 
 export default function UserManagement() {
+  const { profile } = useAuth();
+  const isSuperAdmin = profile?.role === "super_admin" || profile?.role === "admin";
+
   const [users, setUsers] = useState<User[]>([]);
   const [total, setTotal]  = useState(0);
   const [page, setPage] = useState(1);
@@ -30,6 +44,15 @@ export default function UserManagement() {
   const [banModal, setBanModal] = useState<{ userId: string; name: string } | null>(null);
   const [banReason, setBanReason] = useState("");
   const [confirmDeleteUser, setConfirmDeleteUser] = useState<string | null>(null);
+  const [novels, setNovels] = useState<NovelRef[]>([]);
+  const [adminModal, setAdminModal] = useState<{
+    userId: string;
+    name: string;
+    role: "super_admin" | "novel_admin" | "reader" | "admin";
+    selected: Set<string>;
+    loading: boolean;
+    error?: string;
+  } | null>(null);
 
   const pageSize = 20;
   const totalPages = Math.ceil(total / pageSize);
@@ -75,6 +98,56 @@ export default function UserManagement() {
     setConfirmDeleteUser(null);
     await fetchUsers();
     setActionLoading(null);
+  };
+
+  const openAdminModal = async (user: User) => {
+    if (!isSuperAdmin) return;
+    const normalizedRole = (user.role === "admin" ? "super_admin" : user.role) as
+      | "super_admin"
+      | "novel_admin"
+      | "reader";
+    setAdminModal({
+      userId: user.id,
+      name: user.display_name || user.email,
+      role: normalizedRole,
+      selected: new Set<string>(),
+      loading: true,
+    });
+
+    const [novelRes, assignmentRes] = await Promise.all([listNovels(), getNovelAssignments(user.id)]);
+    setNovels(novelRes.novels || []);
+    setAdminModal((prev) =>
+      prev
+        ? {
+            ...prev,
+            selected: new Set<string>((assignmentRes.novelIds || []) as string[]),
+            loading: false,
+            error: assignmentRes.error || novelRes.error,
+          }
+        : null
+    );
+  };
+
+  const toggleNovelSelection = (id: string) => {
+    if (!adminModal) return;
+    const next = new Set(adminModal.selected);
+    next.has(id) ? next.delete(id) : next.add(id);
+    setAdminModal({ ...adminModal, selected: next });
+  };
+
+  const saveAdminModal = async () => {
+    if (!adminModal) return;
+    setActionLoading(adminModal.userId);
+    const role = adminModal.role === "admin" ? "super_admin" : adminModal.role;
+    const novelIds = role === "novel_admin" ? Array.from(adminModal.selected) : [];
+    const res = await setAdminRole({ userId: adminModal.userId, role, novelIds });
+    setActionLoading(null);
+    if (res?.error) {
+      setAdminModal({ ...adminModal, error: res.error });
+      return;
+    }
+    setAdminModal(null);
+    await fetchUsers();
   };
 
   return (
@@ -187,15 +260,26 @@ export default function UserManagement() {
 
                       {/* Role */}
                       <td className="px-4 py-3 hidden md:table-cell">
-                        <span
-                          className={`text-xs font-semibold px-2 py-0.5 rounded capitalize ${
-                            user.role === "admin"
-                              ? "bg-purple-500/20 text-purple-400"
-                              : "bg-bg text-fg-muted"
-                          }`}
-                        >
-                          {user.role}
-                        </span>
+                        {(() => {
+                          const normalizedRole = user.role === "admin" ? "super_admin" : user.role;
+                          const styles =
+                            normalizedRole === "super_admin"
+                              ? "bg-purple-500/20 text-purple-300"
+                              : normalizedRole === "novel_admin"
+                              ? "bg-blue-500/15 text-blue-300"
+                              : "bg-bg text-fg-muted";
+                          const label =
+                            normalizedRole === "super_admin"
+                              ? "Super Admin"
+                              : normalizedRole === "novel_admin"
+                              ? "Novel Admin"
+                              : "Reader";
+                          return (
+                            <span className={`text-xs font-semibold px-2 py-0.5 rounded ${styles}`}>
+                              {label}
+                            </span>
+                          );
+                        })()}
                       </td>
 
                       {/* IP */}
@@ -232,10 +316,23 @@ export default function UserManagement() {
 
                       {/* Actions */}
                       <td className="px-4 py-3 text-right">
-                        {user.role !== "admin" && (
-                          <div className="flex items-center justify-end gap-2 flex-wrap">
-                            {/* Ban / Unban */}
-                            {user.is_banned ? (
+                        <div className="flex items-center justify-end gap-2 flex-wrap">
+                          {isSuperAdmin && (
+                            <button
+                              onClick={() => openAdminModal(user)}
+                              className="px-3 py-1 text-xs rounded-md bg-purple-500/15 text-purple-300 hover:bg-purple-500/25 transition-colors"
+                            >
+                              Manage Access
+                            </button>
+                          )}
+
+                          {(() => {
+                            const normalizedRole = user.role === "admin" ? "super_admin" : user.role;
+                            const isTargetAdmin = normalizedRole === "super_admin" || normalizedRole === "novel_admin";
+
+                            if (isTargetAdmin) return null;
+
+                            return user.is_banned ? (
                               <button
                                 onClick={() => handleUnban(user.id)}
                                 disabled={actionLoading === user.id}
@@ -255,10 +352,15 @@ export default function UserManagement() {
                               >
                                 Ban
                               </button>
-                            )}
+                            );
+                          })()}
 
-                            {/* Delete User */}
-                            {confirmDeleteUser === user.id ? (
+                          {(() => {
+                            const normalizedRole = user.role === "admin" ? "super_admin" : user.role;
+                            const isTargetAdmin = normalizedRole === "super_admin" || normalizedRole === "novel_admin";
+                            if (isTargetAdmin) return null;
+
+                            return confirmDeleteUser === user.id ? (
                               <div className="flex items-center gap-1">
                                 <button
                                   onClick={() => handleDeleteUser(user.id)}
@@ -281,9 +383,9 @@ export default function UserManagement() {
                               >
                                 Delete
                               </button>
-                            )}
-                          </div>
-                        )}
+                            );
+                          })()}
+                        </div>
                       </td>
                     </motion.tr>
                   ))}
@@ -316,6 +418,98 @@ export default function UserManagement() {
           </button>
         </div>
       )}
+
+      {/* Admin Role Modal */}
+      <AnimatePresence>
+        {adminModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+            onClick={() => setAdminModal(null)}
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              onClick={(e) => e.stopPropagation()}
+              className="bg-surface border border-border rounded-xl p-6 w-full max-w-lg"
+            >
+              <h3 className="text-lg font-bold text-fg mb-1">Manage Access</h3>
+              <p className="text-sm text-fg-muted mb-4">{adminModal.name}</p>
+
+              <div className="space-y-3">
+                {["super_admin", "novel_admin", "reader"].map((r) => (
+                  <label key={r} className="flex items-center gap-3 text-sm text-fg cursor-pointer">
+                    <input
+                      type="radio"
+                      name="role"
+                      value={r}
+                      checked={adminModal.role === r}
+                      onChange={() => setAdminModal({ ...adminModal, role: r as any })}
+                      className="accent-accent"
+                    />
+                    <span className="font-medium">
+                      {r === "super_admin" ? "Super Admin" : r === "novel_admin" ? "Novel Admin" : "Reader"}
+                    </span>
+                    <span className="text-fg-muted text-xs">
+                      {r === "super_admin"
+                        ? "Full access to everything"
+                        : r === "novel_admin"
+                        ? "Limited to selected novels"
+                        : "No admin privileges"}
+                    </span>
+                  </label>
+                ))}
+              </div>
+
+              {adminModal.role === "novel_admin" && (
+                <div className="mt-4 space-y-2">
+                  <div className="text-sm font-medium text-fg">Allowed novels</div>
+                  <div className="max-h-48 overflow-y-auto space-y-2 pr-1">
+                    {novels.length === 0 ? (
+                      <div className="text-sm text-fg-muted">No novels found.</div>
+                    ) : (
+                      novels.map((n) => (
+                        <label key={n.id} className="flex items-center gap-2 text-sm text-fg cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={adminModal.selected.has(n.id)}
+                            onChange={() => toggleNovelSelection(n.id)}
+                            className="accent-accent"
+                          />
+                          <span>{n.title}</span>
+                        </label>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {adminModal.error && (
+                <div className="mt-3 text-sm text-red-400">{adminModal.error}</div>
+              )}
+
+              <div className="flex justify-end gap-2 mt-6">
+                <button
+                  onClick={() => setAdminModal(null)}
+                  className="px-4 py-2 text-sm rounded-lg bg-bg border border-border text-fg-muted hover:text-fg transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={saveAdminModal}
+                  disabled={actionLoading === adminModal.userId || (adminModal.role === "novel_admin" && adminModal.selected.size === 0)}
+                  className="px-4 py-2 text-sm rounded-lg bg-accent text-white hover:bg-accent-hover transition-colors disabled:opacity-50"
+                >
+                  {actionLoading === adminModal.userId ? "Saving..." : "Save"}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Ban Modal */}
       <AnimatePresence>

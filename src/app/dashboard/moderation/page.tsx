@@ -6,17 +6,25 @@ import CommentModeration from "@/components/dashboard/comment-moderation";
 import UserManagement from "@/components/dashboard/user-management";
 import ThemeManagement from "@/components/dashboard/theme-management";
 import FontManagement from "@/components/dashboard/font-management";
+import { useAuth } from "@/components/providers/auth-provider";
 
 const TABS = [
-  { id: "comments", label: "Comments", icon: CommentIcon },
-  { id: "users", label: "Users", icon: UsersIcon },
-  { id: "themes", label: "Themes", icon: ThemesIcon },
-  { id: "fonts", label: "Fonts", icon: FontsIcon },
+  { id: "comments", label: "Comments", icon: CommentIcon, minRole: "novel_admin" as const },
+  { id: "users", label: "Users", icon: UsersIcon, minRole: "super_admin" as const },
+  { id: "themes", label: "Themes", icon: ThemesIcon, minRole: "super_admin" as const },
+  { id: "fonts", label: "Fonts", icon: FontsIcon, minRole: "super_admin" as const },
 ] as const;
 
 type TabId = (typeof TABS)[number]["id"];
 
 export default function ModerationPage() {
+  const { profile } = useAuth();
+  const role = profile?.role;
+  const isSuperAdmin = role === "super_admin" || role === "admin";
+  const visibleTabs = TABS.filter((tab) => {
+    if (!role) return tab.id === "comments"; // optimistic default while loading
+    return tab.minRole === "novel_admin" ? role !== "reader" : isSuperAdmin;
+  });
   const [activeTab, setActiveTab] = useState<TabId>("comments");
 
   return (
@@ -31,7 +39,7 @@ export default function ModerationPage() {
 
       {/* Tab Switcher */}
       <div className="flex gap-1 bg-surface border border-border rounded-lg p-1 w-full sm:w-fit overflow-x-auto">
-        {TABS.map((tab) => {
+        {visibleTabs.map((tab) => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.id;
           return (
@@ -68,9 +76,9 @@ export default function ModerationPage() {
           transition={{ duration: 0.2 }}
         >
           {activeTab === "comments" && <CommentModeration />}
-          {activeTab === "users" && <UserManagement />}
-          {activeTab === "themes" && <ThemeManagement />}
-          {activeTab === "fonts" && <FontManagement />}
+          {activeTab === "users" && isSuperAdmin && <UserManagement />}
+          {activeTab === "themes" && isSuperAdmin && <ThemeManagement />}
+          {activeTab === "fonts" && isSuperAdmin && <FontManagement />}
         </motion.div>
       </AnimatePresence>
     </div>

@@ -9,7 +9,7 @@ type UserProfile = {
   email: string;
   display_name: string | null;
   avatar_url: string | null;
-  role: "reader" | "admin";
+  role: "reader" | "novel_admin" | "super_admin" | "admin";
   is_banned: boolean;
 };
 
@@ -179,6 +179,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const clearSupabaseCookies = () => {
+    try {
+      const cookies = document.cookie.split("; ");
+      cookies.forEach((c) => {
+        const [name] = c.split("=");
+        if (name && name.startsWith("sb-")) {
+          document.cookie = `${name}=; path=/; expires=Thu, 01 Jan 1970 00:00:01 GMT;`;
+        }
+      });
+    } catch { /* empty */ }
+  };
+
   const signOut = useCallback(async () => {
     // Set signing out flag FIRST to prevent auth listener from re-fetching
     signingOut.current = true;
@@ -201,12 +213,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       document.querySelectorAll('link[id^="custom-font-"]').forEach((el) => el.remove());
     } catch { /* empty */ }
 
-    // Await the actual sign out so cookies/session are fully cleared
+    // Clear Supabase cookies in the browser to avoid re-login on refresh
+    clearSupabaseCookies();
+
+    // Await the actual sign out so cookies/session are fully cleared (including refresh token)
     try {
-      await supabase.auth.signOut();
+      await supabase.auth.signOut({ scope: "global" });
     } catch {
       // Ignore network errors — local state is already cleared
     } finally {
+      clearSupabaseCookies();
       signingOut.current = false;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

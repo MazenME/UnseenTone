@@ -4,7 +4,6 @@ import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { deleteChapter, toggleChapterDirection } from "@/app/dashboard/chapters/actions";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 
 type Chapter = {
   id: string;
@@ -31,13 +30,13 @@ export default function ChapterList({
   initialChapters: Chapter[];
   novels: Novel[];
 }) {
-  const router = useRouter();
-  const [chapters] = useState(initialChapters);
+  const [chapters, setChapters] = useState(initialChapters);
   const [filterNovel, setFilterNovel] = useState<string>("all");
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [dirLoading, setDirLoading] = useState<string | null>(null);
   const [directionMap, setDirectionMap] = useState<Record<string, "ltr" | "rtl">>({});
+  const [error, setError] = useState<string>("");
 
   const filtered =
     filterNovel === "all"
@@ -46,10 +45,15 @@ export default function ChapterList({
 
   const handleDelete = async (id: string) => {
     setLoading(true);
-    await deleteChapter(id);
+    const result = await deleteChapter(id);
+    if (!result || !result.error) {
+      setChapters((prev) => prev.filter((c) => c.id !== id));
+      setError("");
+    } else {
+      setError(result.error);
+    }
     setDeleteConfirm(null);
     setLoading(false);
-    router.refresh();
   };
 
   const handleToggleDirection = async (id: string, currentDir: "ltr" | "rtl") => {
@@ -57,13 +61,18 @@ export default function ChapterList({
     const result = await toggleChapterDirection(id);
     if (result.success && result.direction) {
       setDirectionMap((prev) => ({ ...prev, [id]: result.direction as "ltr" | "rtl" }));
+      setChapters((prev) => prev.map((c) => (c.id === id ? { ...c, text_direction: result.direction as "ltr" | "rtl" } : c)));
     }
     setDirLoading(null);
-    router.refresh();
   };
 
   return (
     <div className="space-y-6">
+      {error && (
+        <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm">
+          {error}
+        </div>
+      )}
       {/* Header */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div>

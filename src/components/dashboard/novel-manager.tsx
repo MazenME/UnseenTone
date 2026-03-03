@@ -23,7 +23,7 @@ type Novel = {
 
 export default function NovelManager({ initialNovels }: { initialNovels: Novel[] }) {
   const router = useRouter();
-  const [novels] = useState(initialNovels);
+  const [novels, setNovels] = useState(initialNovels);
   const [showForm, setShowForm] = useState(false);
   const [editingNovel, setEditingNovel] = useState<Novel | null>(null);
   const [loading, setLoading] = useState(false);
@@ -47,21 +47,28 @@ export default function NovelManager({ initialNovels }: { initialNovels: Novel[]
       return;
     }
 
+    // Optimistically update local list without page refresh
+    if (editingNovel && result.novel) {
+      setNovels((prev) => prev.map((n) => (n.id === editingNovel.id ? { ...n, ...result.novel } : n)));
+    } else if (!editingNovel && result.novel) {
+      setNovels((prev) => [result.novel as any, ...prev]);
+    }
+
     setShowForm(false);
     setEditingNovel(null);
     setLoading(false);
-    router.refresh();
   };
 
   const handleDelete = async (id: string) => {
     setLoading(true);
     const result = await deleteNovel(id);
-    if (result.error) {
-      setError(result.error);
+    if (!result || result.error) {
+      setError(result?.error || "Delete failed");
+    } else {
+      setNovels((prev) => prev.filter((n) => n.id !== id));
     }
     setDeleteConfirm(null);
     setLoading(false);
-    router.refresh();
   };
 
   const openEdit = (novel: Novel) => {

@@ -20,7 +20,9 @@ export default async function DashboardLayout({
     .eq("id", user.id)
     .single();
 
-  if (profile?.role !== "admin") redirect("/");
+  const role = profile?.role;
+  const isAdmin = role === "admin" || role === "super_admin" || role === "novel_admin";
+  if (!isAdmin) redirect("/");
 
   return <DashboardShell>{children}</DashboardShell>;
 }

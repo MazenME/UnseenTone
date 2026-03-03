@@ -34,6 +34,8 @@ export default function Navbar() {
     router.refresh();
   };
 
+  const normalizedRole = profile?.role === "admin" ? "super_admin" : profile?.role;
+
   return (
     <nav className="sticky top-0 z-50 border-b border-border bg-bg/80 backdrop-blur-md">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -97,7 +99,7 @@ export default function Navbar() {
                         <p className="text-xs text-fg-muted truncate">{user.email}</p>
                       </div>
 
-                      {profile?.role === "admin" && (
+                      {(normalizedRole === "super_admin" || normalizedRole === "novel_admin") && (
                         <Link
                           href="/dashboard"
                           onClick={() => setMenuOpen(false)}

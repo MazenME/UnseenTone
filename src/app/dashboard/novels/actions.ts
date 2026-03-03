@@ -4,6 +4,44 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { revalidatePath } from "next/cache";
 
+type AdminRole = "super_admin" | "novel_admin" | "reader";
+
+async function getAdminScope() {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { error: "Unauthorized" as const };
+
+  const { data: profile } = await supabase
+    .from("users_profile")
+    .select("role")
+    .eq("id", user.id)
+    .single();
+
+  let role: AdminRole = "reader";
+  if (profile?.role === "admin" || profile?.role === "super_admin") role = "super_admin";
+  else if (profile?.role === "novel_admin") role = "novel_admin";
+
+  if (role === "reader") return { error: "Forbidden" as const };
+
+  const admin = createAdminClient();
+  let allowedNovelIds: string[] = [];
+  if (role === "novel_admin") {
+    const { data: rows } = await admin
+      .from("novel_admins")
+      .select("novel_id")
+      .eq("admin_id", user.id);
+    allowedNovelIds = (rows || []).map((r: any) => r.novel_id);
+  }
+
+  return { user, role, allowedNovelIds, admin };
+}
+
+function isSuper(role: AdminRole) {
+  return role === "super_admin";
+}
+
 function slugify(text: string): string {
   return text
     .toLowerCase()
@@ -14,11 +52,9 @@ function slugify(text: string): string {
 }
 
 export async function createNovel(formData: FormData) {
+  const scope = await getAdminScope();
+  if ("error" in scope) return { error: scope.error };
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return { error: "Unauthorized" };
 
   const title = formData.get("title") as string;
   const synopsis = formData.get("synopsis") as string;
@@ -32,7 +68,7 @@ export async function createNovel(formData: FormData) {
   let cover_url: string | null = null;
 
   if (coverFile && coverFile.size > 0) {
-    const admin = createAdminClient();
+    const admin = scope.admin;
     const ext = coverFile.name.split(".").pop();
     const path = `novels/${slug}-${Date.now()}.${ext}`;
 
@@ -49,29 +85,38 @@ export async function createNovel(formData: FormData) {
     cover_url = publicUrl.publicUrl;
   }
 
-  const { error } = await supabase.from("novels").insert({
-    title: title.trim(),
-    slug,
-    synopsis: synopsis?.trim() || null,
-    status: status || "ongoing",
-    cover_url,
-  });
+  const { data: inserted, error } = await supabase
+    .from("novels")
+    .insert({
+      title: title.trim(),
+      slug,
+      synopsis: synopsis?.trim() || null,
+      status: status || "ongoing",
+      cover_url,
+    })
+    .select("id, title, slug, synopsis, cover_url, status, total_reads, created_at")
+    .single();
 
   if (error) {
     if (error.code === "23505") return { error: "A novel with this title/slug already exists" };
     return { error: error.message };
   }
 
+  if (scope.role === "novel_admin") {
+    await scope.admin
+      .from("novel_admins")
+      .upsert({ admin_id: scope.user.id, novel_id: inserted!.id }, { onConflict: "admin_id,novel_id" });
+  }
+
   revalidatePath("/dashboard/novels");
-  return { success: true };
+  return { success: true, novel: inserted };
 }
 
 export async function updateNovel(novelId: string, formData: FormData) {
+  const scope = await getAdminScope();
+  if ("error" in scope) return { error: scope.error };
+  if (!isSuper(scope.role) && !scope.allowedNovelIds.includes(novelId)) return { error: "Forbidden" };
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return { error: "Unauthorized" };
 
   const title = formData.get("title") as string;
   const synopsis = formData.get("synopsis") as string;
@@ -90,7 +135,7 @@ export async function updateNovel(novelId: string, formData: FormData) {
   };
 
   if (coverFile && coverFile.size > 0) {
-    const admin = createAdminClient();
+    const admin = scope.admin;
     const ext = coverFile.name.split(".").pop();
     const path = `novels/${slug}-${Date.now()}.${ext}`;
 
@@ -107,10 +152,12 @@ export async function updateNovel(novelId: string, formData: FormData) {
     updates.cover_url = publicUrl.publicUrl;
   }
 
-  const { error } = await supabase
+  const { data: updated, error } = await supabase
     .from("novels")
     .update(updates)
-    .eq("id", novelId);
+    .eq("id", novelId)
+    .select("id, title, slug, synopsis, cover_url, status, total_reads, created_at")
+    .single();
 
   if (error) {
     if (error.code === "23505") return { error: "A novel with this title/slug already exists" };
@@ -118,15 +165,14 @@ export async function updateNovel(novelId: string, formData: FormData) {
   }
 
   revalidatePath("/dashboard/novels");
-  return { success: true };
+  return { success: true, novel: updated };
 }
 
 export async function deleteNovel(novelId: string) {
+  const scope = await getAdminScope();
+  if ("error" in scope) return { error: scope.error };
+  if (!isSuper(scope.role) && !scope.allowedNovelIds.includes(novelId)) return { error: "Forbidden" };
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return { error: "Unauthorized" };
 
   const { error } = await supabase.from("novels").delete().eq("id", novelId);
 

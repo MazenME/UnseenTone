@@ -1,13 +1,40 @@
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import NovelManager from "@/components/dashboard/novel-manager";
 
 export default async function NovelsPage() {
   const supabase = await createClient();
+  const admin = createAdminClient();
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  const { data: profile } = await supabase
+    .from("users_profile")
+    .select("role")
+    .eq("id", user?.id)
+    .single();
+
+  const role = profile?.role === "admin" ? "super_admin" : profile?.role;
+  let allowedNovelIds: string[] | null = null;
+
+  if (role === "novel_admin" && user?.id) {
+    const { data: rows } = await admin.from("novel_admins").select("novel_id").eq("admin_id", user.id);
+    allowedNovelIds = (rows || []).map((r: any) => r.novel_id);
+    if (!allowedNovelIds.length) return <NovelManager initialNovels={[]} />;
+  }
+
+  const novelQuery = supabase.from("novels").select("*").order("created_at", { ascending: false });
+  const novelRatingsQuery = supabase.from("novel_ratings").select("novel_id, rating");
+  const chapterRatingsQuery = supabase.from("chapter_ratings").select("rating, chapters(novel_id)");
 
   const [{ data: novels }, { data: novelRatings }, { data: chapterRatings }] = await Promise.all([
-    supabase.from("novels").select("*").order("created_at", { ascending: false }),
-    supabase.from("novel_ratings").select("novel_id, rating"),
-    supabase.from("chapter_ratings").select("rating, chapters(novel_id)"),
+    role === "novel_admin" && allowedNovelIds ? novelQuery.in("id", allowedNovelIds) : novelQuery,
+    role === "novel_admin" && allowedNovelIds ? novelRatingsQuery.in("novel_id", allowedNovelIds) : novelRatingsQuery,
+    role === "novel_admin" && allowedNovelIds
+      ? chapterRatingsQuery.in("chapters.novel_id", allowedNovelIds)
+      : chapterRatingsQuery,
   ]);
 
   // Aggregate novel ratings
