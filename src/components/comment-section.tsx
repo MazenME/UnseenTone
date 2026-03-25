@@ -3,8 +3,10 @@
 import { useState, useEffect, useTransition, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import Turnstile from "react-turnstile";
+import Image from "next/image";
 import {
   getChapterComments,
+  getCommentNode,
   submitComment,
   toggleCommentReaction,
   type CommentRow,
@@ -14,6 +16,55 @@ import { createClient } from "@/lib/supabase/client";
 interface Props {
   chapterId: string;
   userId: string | null;
+}
+
+function removeNodeFromTree(list: CommentRow[], nodeId: string): CommentRow[] {
+  return list
+    .filter((node) => node.id !== nodeId)
+    .map((node) => ({
+      ...node,
+      replies: node.replies?.length ? removeNodeFromTree(node.replies, nodeId) : [],
+    }));
+}
+
+function upsertNodeInTree(list: CommentRow[], node: CommentRow): CommentRow[] {
+  const withoutExisting = removeNodeFromTree(list, node.id);
+
+  if (!node.parent_id) {
+    return [...withoutExisting, node].sort(
+      (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+    );
+  }
+
+  let attached = false;
+  const attach = (nodes: CommentRow[]): CommentRow[] => {
+    return nodes.map((current) => {
+      if (current.id === node.parent_id) {
+        attached = true;
+        const nextReplies = [...(current.replies || []), node].sort(
+          (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+        );
+        return { ...current, replies: nextReplies };
+      }
+      if (current.replies?.length) {
+        return { ...current, replies: attach(current.replies) };
+      }
+      return current;
+    });
+  };
+
+  const updated = attach(withoutExisting);
+  return attached
+    ? updated
+    : [...updated, node].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+}
+
+function applyDepths(list: CommentRow[], depth = 0): CommentRow[] {
+  return list.map((node) => ({
+    ...node,
+    depth,
+    replies: node.replies?.length ? applyDepths(node.replies, depth + 1) : [],
+  }));
 }
 
 export default function CommentSection({ chapterId, userId }: Props) {
@@ -35,20 +86,41 @@ export default function CommentSection({ chapterId, userId }: Props) {
 
   // Track whether we just submitted (to skip the next realtime event)
   const justSubmittedRef = useRef(false);
-  // Debounce timer for realtime events
-  const realtimeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const fetchInFlightRef = useRef(false);
+  const fetchQueuedRef = useRef(false);
 
-  // Initial load shows skeleton; subsequent refreshes update silently
-  const loadComments = useCallback(async (showSkeleton = false) => {
-    if (showSkeleton) setLoading(true);
+  // Refresh helper used by submit/realtime paths
+  const loadComments = useCallback(async () => {
+    if (fetchInFlightRef.current) {
+      fetchQueuedRef.current = true;
+      return;
+    }
+    fetchInFlightRef.current = true;
     const data = await getChapterComments(chapterId);
     setComments(data);
-    setLoading(false);
+    fetchInFlightRef.current = false;
+
+    if (fetchQueuedRef.current) {
+      fetchQueuedRef.current = false;
+      const queuedData = await getChapterComments(chapterId);
+      setComments(queuedData);
+    }
   }, [chapterId]);
 
   useEffect(() => {
-    loadComments(true); // only initial load shows skeleton
-  }, [loadComments]);
+    let cancelled = false;
+
+    (async () => {
+      const data = await getChapterComments(chapterId);
+      if (cancelled) return;
+      setComments(data);
+      setLoading(false);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [chapterId]);
 
   // Real-time: subscribe to comment changes for this chapter (debounced)
   useEffect(() => {
@@ -63,23 +135,30 @@ export default function CommentSection({ chapterId, userId }: Props) {
           table: "comments",
           filter: `chapter_id=eq.${chapterId}`,
         },
-        () => {
+        async (payload) => {
           // Skip if we just submitted (our own manual loadComments handles it)
           if (justSubmittedRef.current) {
             justSubmittedRef.current = false;
             return;
           }
-          // Debounce: batch rapid events into one fetch (500ms)
-          if (realtimeTimerRef.current) clearTimeout(realtimeTimerRef.current);
-          realtimeTimerRef.current = setTimeout(() => {
-            loadComments(false); // silent refresh, no skeleton
-          }, 500);
+
+          const deletedId = (payload.old as { id?: string } | null)?.id;
+          const changedId = (payload.new as { id?: string } | null)?.id ?? deletedId;
+          if (!changedId) return;
+
+          if (payload.eventType === "DELETE") {
+            setComments((prev) => applyDepths(removeNodeFromTree(prev, changedId)));
+            return;
+          }
+
+          const node = await getCommentNode(changedId);
+          if (!node || node.chapter_id !== chapterId) return;
+          setComments((prev) => applyDepths(upsertNodeInTree(prev, node)));
         }
       )
       .subscribe();
 
     return () => {
-      if (realtimeTimerRef.current) clearTimeout(realtimeTimerRef.current);
       supabase.removeChannel(channel);
     };
   }, [chapterId, loadComments]);
@@ -102,7 +181,7 @@ export default function CommentSection({ chapterId, userId }: Props) {
       setTurnstileToken(null);
       setTurnstileKey((k) => k + 1);
       justSubmittedRef.current = true;
-      loadComments(false);
+      loadComments();
     });
   };
 
@@ -127,7 +206,7 @@ export default function CommentSection({ chapterId, userId }: Props) {
     setReplyingTo(null);
     setReplyPending(false);
     justSubmittedRef.current = true;
-    loadComments(false);
+    loadComments();
   };
 
   const handleReaction = async (commentId: string, type: "like" | "dislike") => {
@@ -178,23 +257,25 @@ export default function CommentSection({ chapterId, userId }: Props) {
   };
 
   const renderComment = (c: CommentRow, depth = 0) => {
-    const indent = Math.min(depth, 3); // cap visual nesting at 3 levels
-    const mlClass = indent > 0 ? `ml-${indent * 4} sm:ml-${indent * 6}` : "";
+    const resolvedDepth = c.depth ?? depth;
+    const indent = Math.min(resolvedDepth, 3); // cap visual nesting at 3 levels
     return (
     <motion.div
       key={c.id}
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.3 }}
-      className={`bg-surface border border-border rounded-xl p-4 ${depth > 0 ? "border-l-2 border-l-accent/30" : ""}`}
-      style={depth > 0 ? { marginLeft: `${Math.min(depth, 3) * 0.75}rem` } : undefined}
+      className={`bg-surface border border-border rounded-xl p-4 ${indent > 0 ? "border-l-2 border-l-accent/30" : ""}`}
+      style={indent > 0 ? { marginLeft: `${indent * 0.75}rem` } : undefined}
     >
       {/* Header */}
       <div className="flex items-center gap-3 mb-2">
         {c.users_profile?.avatar_url ? (
-          <img
+          <Image
             src={c.users_profile.avatar_url}
             alt=""
+            width={32}
+            height={32}
             className="w-8 h-8 rounded-full object-cover border border-border"
           />
         ) : (
@@ -206,14 +287,19 @@ export default function CommentSection({ chapterId, userId }: Props) {
           <span className="text-sm font-semibold text-fg truncate">
             {getDisplayName(c)}
           </span>
-          <span className="text-xs text-fg-muted flex-shrink-0">
+          {resolvedDepth > 0 && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-accent/10 text-accent border border-accent/20">
+              d{resolvedDepth}
+            </span>
+          )}
+          <span className="text-xs text-fg-muted shrink-0">
             {formatDate(c.created_at)}
           </span>
         </div>
       </div>
 
       {/* Body */}
-      <p className="text-sm text-fg/90 leading-relaxed whitespace-pre-wrap break-words">
+      <p className="text-sm text-fg/90 leading-relaxed whitespace-pre-wrap wrap-break-word">
         {c.body}
       </p>
 
@@ -282,7 +368,7 @@ export default function CommentSection({ chapterId, userId }: Props) {
             className="w-full bg-bg border border-border rounded-lg px-3 py-2 text-fg text-sm resize-none focus:border-accent/50 focus:outline-none placeholder:text-fg-muted/50"
           />
           <div className="flex flex-col sm:flex-row items-stretch sm:items-end justify-between gap-3 mt-2">
-            <div className="flex-shrink-0">
+            <div className="shrink-0">
               <Turnstile
                 key={replyTurnstileKey}
                 sitekey={siteKey}
@@ -315,7 +401,7 @@ export default function CommentSection({ chapterId, userId }: Props) {
       {/* Nested Replies */}
       {c.replies && c.replies.length > 0 && (
         <div className="mt-3 space-y-2">
-          {c.replies.map((reply) => renderComment(reply, depth + 1))}
+          {c.replies.map((reply) => renderComment(reply, resolvedDepth + 1))}
         </div>
       )}
     </motion.div>
@@ -350,7 +436,7 @@ export default function CommentSection({ chapterId, userId }: Props) {
             className="w-full bg-bg border border-border rounded-lg px-3 py-2 text-fg text-sm resize-none focus:border-accent/50 focus:outline-none placeholder:text-fg-muted/50"
           />
           <div className="flex flex-col sm:flex-row items-stretch sm:items-end justify-between gap-3 mt-3">
-            <div className="flex-shrink-0">
+            <div className="shrink-0">
               <Turnstile
                 key={turnstileKey}
                 sitekey={siteKey}

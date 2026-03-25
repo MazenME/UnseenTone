@@ -141,6 +141,8 @@ export default function DashboardShell({ children }: { children: React.ReactNode
           <button
             onClick={() => setSidebarOpen(true)}
             className="lg:hidden p-2 -ml-2 text-fg-muted hover:text-fg rounded-lg cursor-pointer"
+            aria-label="Open dashboard menu"
+            title="Open dashboard menu"
           >
             <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />

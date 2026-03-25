@@ -8,6 +8,7 @@ import Color from "@tiptap/extension-color";
 import FontFamily from "@tiptap/extension-font-family";
 import Placeholder from "@tiptap/extension-placeholder";
 import { useState } from "react";
+import type { ReactNode } from "react";
 
 const FONT_OPTIONS = [
   { label: "Default (Sans)", value: "ui-sans-serif, system-ui, sans-serif" },
@@ -34,6 +35,39 @@ type TipTapEditorProps = {
   onChange?: (html: string) => void;
   placeholder?: string;
 };
+
+type ToolbarButtonProps = {
+  onClick: () => void;
+  isActive?: boolean;
+  title: string;
+  children: ReactNode;
+};
+
+function ToolbarButton({
+  onClick,
+  isActive = false,
+  title,
+  children,
+}: ToolbarButtonProps) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={title}
+      className={`p-2 rounded-lg text-sm transition-colors cursor-pointer ${
+        isActive
+          ? "bg-accent/20 text-accent"
+          : "text-fg-muted hover:text-fg hover:bg-bg-secondary"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function Divider() {
+  return <div className="w-px h-6 bg-border mx-1" />;
+}
 
 export default function TipTapEditor({
   content = "",
@@ -64,7 +98,7 @@ export default function TipTapEditor({
     content,
     editorProps: {
       attributes: {
-        class: "tiptap prose-sm max-w-none focus:outline-none text-fg min-h-[400px]",
+        class: "tiptap prose-sm max-w-none focus:outline-none text-fg min-h-100",
       },
     },
     onUpdate: ({ editor }) => {
@@ -76,37 +110,10 @@ export default function TipTapEditor({
     return (
       <div className="border border-border rounded-xl bg-surface animate-pulse">
         <div className="h-12 border-b border-border" />
-        <div className="h-[400px]" />
+        <div className="h-100" />
       </div>
     );
   }
-
-  const ToolbarButton = ({
-    onClick,
-    isActive = false,
-    title,
-    children,
-  }: {
-    onClick: () => void;
-    isActive?: boolean;
-    title: string;
-    children: React.ReactNode;
-  }) => (
-    <button
-      type="button"
-      onClick={onClick}
-      title={title}
-      className={`p-2 rounded-lg text-sm transition-colors cursor-pointer ${
-        isActive
-          ? "bg-accent/20 text-accent"
-          : "text-fg-muted hover:text-fg hover:bg-bg-secondary"
-      }`}
-    >
-      {children}
-    </button>
-  );
-
-  const Divider = () => <div className="w-px h-6 bg-border mx-1" />;
 
   return (
     <div className="border border-border rounded-xl bg-surface overflow-hidden">
@@ -220,13 +227,13 @@ export default function TipTapEditor({
           >
             <div className="flex flex-col items-center gap-0.5">
               <span className="text-xs font-bold">A</span>
-              <div
-                className="w-4 h-1 rounded-full"
-                style={{
-                  backgroundColor:
-                    (editor.getAttributes("textStyle").color as string) || "currentColor",
-                }}
-              />
+              <svg className="w-4 h-1 rounded-full" viewBox="0 0 16 4" aria-hidden="true">
+                <rect
+                  width="16"
+                  height="4"
+                  fill={(editor.getAttributes("textStyle").color as string) || "currentColor"}
+                />
+              </svg>
             </div>
           </ToolbarButton>
 
@@ -248,10 +255,9 @@ export default function TipTapEditor({
                     className="flex flex-col items-center gap-1 p-1.5 rounded-lg hover:bg-bg-secondary transition-colors cursor-pointer"
                     title={color.label}
                   >
-                    <div
-                      className="w-5 h-5 rounded-full border border-border"
-                      style={{ backgroundColor: color.value || "var(--fg)" }}
-                    />
+                    <svg className="w-5 h-5 rounded-full border border-border" viewBox="0 0 20 20" aria-hidden="true">
+                      <circle cx="10" cy="10" r="9" fill={color.value || "var(--fg)"} />
+                    </svg>
                     <span className="text-[10px] text-fg-muted">{color.label}</span>
                   </button>
                 ))}
@@ -263,6 +269,8 @@ export default function TipTapEditor({
                     type="color"
                     value={customColor}
                     onChange={(e) => setCustomColor(e.target.value)}
+                    title="Pick custom text color"
+                    aria-label="Pick custom text color"
                     className="w-8 h-8 rounded cursor-pointer border-0 bg-transparent"
                   />
                   <button
@@ -304,7 +312,6 @@ export default function TipTapEditor({
                     setShowFontPicker(false);
                   }}
                   className="w-full text-left px-3 py-2 text-sm text-fg hover:bg-bg-secondary transition-colors cursor-pointer"
-                  style={{ fontFamily: font.value }}
                 >
                   {font.label}
                 </button>
@@ -380,3 +387,4 @@ export default function TipTapEditor({
     </div>
   );
 }
+

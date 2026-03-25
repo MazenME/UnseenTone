@@ -8,38 +8,20 @@
   · serverActions
 
   Creating an optimized production build ...
-✓ Compiled successfully in 8.9s
+✓ Compiled successfully in 9.1s
   Running TypeScript ...
-  Collecting page data using 7 workers ...
-  Generating static pages using 7 workers (0/16) ...
-  Generating static pages using 7 workers (4/16) 
-  Generating static pages using 7 workers (8/16) 
-  Generating static pages using 7 workers (12/16) 
-✓ Generating static pages using 7 workers (16/16) in 1058.5ms
-  Finalizing page optimization ...
+Failed to compile.
 
-Route (app)
-┌ ƒ /
-├ ○ /_not-found
-├ ○ /about
-├ ƒ /auth/callback
-├ ƒ /bookmarks
-├ ƒ /dashboard
-├ ƒ /dashboard/chapters
-├ ƒ /dashboard/chapters/[id]/edit
-├ ƒ /dashboard/chapters/new
-├ ƒ /dashboard/moderation
-├ ƒ /dashboard/novels
-├ ƒ /favourites
-├ ○ /login
-├ ƒ /novel/[slug]
-├ ○ /privacy
-├ ƒ /read/[chapterId]
-└ ○ /signup
+./src/app/dashboard/chapters/page.tsx:38:23
+Type error: Type '{ id: any; novel_id: any; chapter_number: any; title: any; word_count: any; is_published: any; reads: any; text_direction: any; created_at: any; novels: { title: any; }[]; }[]' is not assignable to type 'Chapter[]'.
+  Type '{ id: any; novel_id: any; chapter_number: any; title: any; word_count: any; is_published: any; reads: any; text_direction: any; created_at: any; novels: { title: any; }[]; }' is not assignable to type 'Chapter'.
+    Types of property 'novels' are incompatible.
+      Property 'title' is missing in type '{ title: any; }[]' but required in type '{ title: string; }'.
 
-
-ƒ Proxy (Middleware)
-
-○  (Static)   prerendered as static content
-ƒ  (Dynamic)  server-rendered on demand
-
+[0m [90m 36 |[39m   ])[33m;[39m
+ [90m 37 |[39m
+[31m[1m>[22m[39m[90m 38 |[39m   [36mreturn[39m [33m<[39m[33mChapterList[39m initialChapters[33m=[39m{chapters [33m||[39m []} novels[33m=[39m{novels [33m||[39m []} [33m/[39m[33m>[39m[33m;[39m
+ [90m    |[39m                       [31m[1m^[22m[39m
+ [90m 39 |[39m }
+ [90m 40 |[39m[0m
+Next.js build worker exited with code: 1 and signal: null

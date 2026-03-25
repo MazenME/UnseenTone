@@ -8,8 +8,9 @@ import CommentSection from "@/components/comment-section";
 import LikeButton from "@/components/like-button";
 import BookmarkButton from "@/components/bookmark-button";
 import RatingStars from "@/components/rating-stars";
-import { rateChapter } from "@/app/read/actions";
-import { useState, useEffect } from "react";
+import { rateChapter, syncReadingProgress } from "@/app/read/actions";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import DOMPurify from "dompurify";
 
 interface Chapter {
   id: string;
@@ -54,6 +55,27 @@ export default function ChapterReaderClient({ chapter, novel, prevChapter, nextC
   const [showTopBar, setShowTopBar] = useState(true);
   const [lastScrollY, setLastScrollY] = useState(0);
   const [progress, setProgress] = useState(0);
+  const lastProgressSyncAtRef = useRef(0);
+  const articleRef = useRef<HTMLElement | null>(null);
+  const chapterContentRef = useRef<HTMLDivElement | null>(null);
+
+  const sanitizedContent = useMemo(() => {
+    const cleaned = DOMPurify.sanitize(chapter.content, {
+      USE_PROFILES: { html: true },
+    });
+
+    return cleaned
+      // Strip inline font-family so the reader font setting applies
+      .replace(/font-family\s*:[^;]*;?\s*/gi, "")
+      // Strip inline color so the theme's --content-text / --content-heading apply
+      .replace(/(?<![\w-])color\s*:[^;]*;?\s*/gi, "")
+      // Strip inline line-height so the reader line-spacing setting applies
+      .replace(/line-height\s*:[^;]*;?\s*/gi, "")
+      // Strip inline width / max-width so the reader content-width setting applies
+      .replace(/(?<![\w-])(?:max-)?width\s*:[^;]*;?\s*/gi, "")
+      // Clean up empty style attributes left behind
+      .replace(/style="\s*"/gi, "");
+  }, [chapter.content]);
 
   // Auto-hide top bar on scroll down, show on scroll up
   useEffect(() => {
@@ -71,15 +93,57 @@ export default function ChapterReaderClient({ chapter, novel, prevChapter, nextC
     return () => window.removeEventListener("scroll", handleScroll);
   }, [lastScrollY]);
 
+  const syncProgress = useCallback(
+    async (force = false) => {
+      if (!userId) return;
+
+      const now = Date.now();
+      if (!force && now - lastProgressSyncAtRef.current < 10_000) return;
+      lastProgressSyncAtRef.current = now;
+
+      await syncReadingProgress({
+        novelId: chapter.novel_id,
+        chapterId: chapter.id,
+        chapterNumber: chapter.chapter_number,
+        progressPercent: progress,
+      });
+    },
+    [userId, chapter.novel_id, chapter.id, chapter.chapter_number, progress]
+  );
+
+  useEffect(() => {
+    void syncProgress(false);
+  }, [progress, syncProgress]);
+
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      void syncProgress(true);
+    };
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [syncProgress]);
+
+  useEffect(() => {
+    if (!articleRef.current || !chapterContentRef.current) return;
+
+    articleRef.current.style.maxWidth = mounted ? `${settings.maxWidth}px` : "720px";
+
+    const content = chapterContentRef.current;
+    content.style.fontSize = mounted ? `${settings.fontSize}px` : "18px";
+    content.style.fontFamily = mounted ? settings.fontFamily : "";
+    content.style.lineHeight = String(mounted ? settings.lineHeight : 1.8);
+  }, [mounted, settings]);
+
   const estimatedReadTime = Math.max(1, Math.round(chapter.word_count / 250));
 
   return (
     <div className="min-h-screen bg-bg">
       {/* Progress Bar */}
-      <div className="fixed top-0 left-0 right-0 z-[60] h-0.5 bg-border/30">
+      <div className="fixed top-0 left-0 right-0 z-60 h-0.5 bg-border/30">
         <motion.div
           className="h-full bg-accent"
-          style={{ width: `${progress}%` }}
+          animate={{ width: `${progress}%` }}
           transition={{ duration: 0.1 }}
         />
       </div>
@@ -95,12 +159,12 @@ export default function ChapterReaderClient({ chapter, novel, prevChapter, nextC
           {/* Left: Back to novel */}
           <Link
             href={`/novel/${novel.slug}`}
-            className="flex items-center gap-2 text-fg-muted hover:text-fg transition-colors min-w-0 flex-shrink"
+            className="flex items-center gap-2 text-fg-muted hover:text-fg transition-colors min-w-0 shrink"
           >
-            <svg className="w-5 h-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <svg className="w-5 h-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
             </svg>
-            <span className="text-sm truncate max-w-[150px] sm:max-w-[250px]">
+            <span className="text-sm truncate max-w-37.5 sm:max-w-62.5">
               {novel.title}
             </span>
           </Link>
@@ -114,12 +178,16 @@ export default function ChapterReaderClient({ chapter, novel, prevChapter, nextC
 
           {/* Right: Controls */}
           <div className="flex items-center gap-2">
-            <ThemeSwitcher />
-            <ReaderControls
-              settings={settings}
-              updateSettings={updateSettings}
-              resetSettings={resetSettings}
-            />
+            {userId && (
+              <>
+                <ThemeSwitcher />
+                <ReaderControls
+                  settings={settings}
+                  updateSettings={updateSettings}
+                  resetSettings={resetSettings}
+                />
+              </>
+            )}
           </div>
         </div>
       </motion.header>
@@ -127,10 +195,8 @@ export default function ChapterReaderClient({ chapter, novel, prevChapter, nextC
       {/* Chapter Content */}
       <main className="pt-20 pb-24 px-4">
         <article
+          ref={articleRef}
           className="mx-auto w-full"
-          style={{
-            maxWidth: mounted ? `${settings.maxWidth}px` : "720px",
-          }}
         >
           {/* Chapter Header */}
           <motion.div
@@ -165,29 +231,14 @@ export default function ChapterReaderClient({ chapter, novel, prevChapter, nextC
 
           {/* Chapter Body */}
           <motion.div
+            ref={chapterContentRef}
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={{ duration: 0.6, delay: 0.2 }}
-            className="chapter-content"
+            className={`chapter-content ${chapter.text_direction === "rtl" ? "text-right" : "text-left"}`}
             dir={chapter.text_direction || "ltr"}
-            style={{
-              fontSize: mounted ? `${settings.fontSize}px` : "18px",
-              fontFamily: mounted ? settings.fontFamily : undefined,
-              lineHeight: mounted ? settings.lineHeight : 1.8,
-              textAlign: chapter.text_direction === "rtl" ? "right" : "left",
-            }}
             dangerouslySetInnerHTML={{
-              __html: chapter.content
-                // Strip inline font-family so the reader font setting applies
-                .replace(/font-family\s*:[^;]*;?\s*/gi, "")
-                // Strip inline color so the theme's --content-text / --content-heading apply
-                .replace(/(?<![\w-])color\s*:[^;]*;?\s*/gi, "")
-                // Strip inline line-height so the reader line-spacing setting applies
-                .replace(/line-height\s*:[^;]*;?\s*/gi, "")
-                // Strip inline width / max-width so the reader content-width setting applies
-                .replace(/(?<![\w-])(?:max-)?width\s*:[^;]*;?\s*/gi, "")
-                // Clean up empty style attributes left behind
-                .replace(/style="\s*"/gi, ""),
+              __html: sanitizedContent,
             }}
           />
 
@@ -234,7 +285,7 @@ export default function ChapterReaderClient({ chapter, novel, prevChapter, nextC
                 href={`/read/${prevChapter.id}`}
                 className="flex-1 flex items-center gap-3 p-4 bg-surface border border-border rounded-xl hover:border-accent/50 transition-all group"
               >
-                <svg className="w-5 h-5 text-fg-muted group-hover:text-accent group-hover:-translate-x-1 transition-all flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <svg className="w-5 h-5 text-fg-muted group-hover:text-accent group-hover:-translate-x-1 transition-all shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
                 </svg>
                 <div className="min-w-0">
@@ -259,7 +310,7 @@ export default function ChapterReaderClient({ chapter, novel, prevChapter, nextC
                     Ch. {nextChapter.chapter_number}: {nextChapter.title}
                   </p>
                 </div>
-                <svg className="w-5 h-5 text-fg-muted group-hover:text-accent group-hover:translate-x-1 transition-all flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <svg className="w-5 h-5 text-fg-muted group-hover:text-accent group-hover:translate-x-1 transition-all shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
                 </svg>
               </Link>
@@ -296,3 +347,4 @@ export default function ChapterReaderClient({ chapter, novel, prevChapter, nextC
     </div>
   );
 }
+

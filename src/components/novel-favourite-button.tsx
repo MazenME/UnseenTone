@@ -41,10 +41,10 @@ export default function NovelFavouriteButton({
       }
       setFavourited(res.favourited!);
       setCount(res.count!);
-    } catch (e: any) {
+    } catch (e: unknown) {
       setFavourited(wasFav);
       setCount(wasCount);
-      setError(e.message ?? "Unknown error");
+      setError(e instanceof Error ? e.message : "Unknown error");
       console.error("NovelFavouriteButton exception:", e);
     } finally {
       setPending(false);
@@ -61,11 +61,11 @@ export default function NovelFavouriteButton({
           ${
             favourited
               ? "bg-red-500/20 text-red-400 hover:bg-red-500/30"
-              : "bg-[var(--card)]/60 text-[var(--muted)] hover:text-red-400 hover:bg-red-500/10"
+              : "bg-(--card)/60 text-(--muted) hover:text-red-400 hover:bg-red-500/10"
           }
           ${!userId ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}
           ${pending ? "animate-pulse" : ""}
-          border border-[var(--border)]`}
+          border border-(--border)`}
       >
         <svg
           className={`w-4 h-4 transition-transform ${favourited ? "scale-110" : ""}`}
@@ -82,7 +82,8 @@ export default function NovelFavouriteButton({
         </svg>
         <span>{count}</span>
       </button>
-      {error && <p className="text-xs text-red-400 max-w-[200px] text-center">{error}</p>}
+      {error && <p className="text-xs text-red-400 max-w-50 text-center">{error}</p>}
     </div>
   );
 }
+

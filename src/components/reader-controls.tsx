@@ -77,13 +77,8 @@ function injectFontLinks(fontUrls: { id: string; url: string }[]) {
 }
 
 export function useReaderSettings() {
-  const [settings, setSettings] = useState<ReaderSettings>(DEFAULT_SETTINGS);
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => {
-    setSettings(loadSettings());
-    setMounted(true);
-  }, []);
+  const [settings, setSettings] = useState<ReaderSettings>(() => loadSettings());
+  const mounted = typeof window !== "undefined";
 
   const updateSettings = useCallback((updates: Partial<ReaderSettings>) => {
     setSettings((prev) => {
@@ -109,11 +104,7 @@ interface ReaderControlsProps {
 
 export default function ReaderControls({ settings, updateSettings, resetSettings }: ReaderControlsProps) {
   const [open, setOpen] = useState(false);
-  const [allFonts, setAllFonts] = useState<FontOption[]>(() => {
-    // Initialize with cached custom fonts if available
-    const cached = getCachedCustomFonts();
-    return cached ? [...BUILTIN_FONTS, ...cached.fonts] : BUILTIN_FONTS;
-  });
+  const [allFonts, setAllFonts] = useState<FontOption[]>(BUILTIN_FONTS);
   const { user } = useAuth();
   const lastFetchedUserId = useRef<string | null>(null);
 
@@ -122,6 +113,9 @@ export default function ReaderControls({ settings, updateSettings, resetSettings
     const cached = getCachedCustomFonts();
     if (cached?.fontUrls) {
       injectFontLinks(cached.fontUrls);
+    }
+    if (cached?.fonts?.length) {
+      setAllFonts([...BUILTIN_FONTS, ...cached.fonts]);
     }
   }, []);
 
@@ -226,7 +220,7 @@ export default function ReaderControls({ settings, updateSettings, resetSettings
               {/* Font Size */}
               <div>
                 <div className="flex items-center justify-between mb-2">
-                  <label className="text-xs text-fg-muted">Font Size</label>
+                  <label htmlFor="reader-font-size" className="text-xs text-fg-muted">Font Size</label>
                   <span className="text-xs text-fg font-mono">{settings.fontSize}px</span>
                 </div>
                 <div className="flex items-center gap-2">
@@ -237,11 +231,13 @@ export default function ReaderControls({ settings, updateSettings, resetSettings
                     A
                   </button>
                   <input
+                    id="reader-font-size"
                     type="range"
                     min={12}
                     max={28}
                     value={settings.fontSize}
                     onChange={(e) => updateSettings({ fontSize: Number(e.target.value) })}
+                    aria-label="Reader font size"
                     className="flex-1 accent-accent h-1.5"
                   />
                   <button
@@ -268,7 +264,6 @@ export default function ReaderControls({ settings, updateSettings, resetSettings
                             ? "bg-accent/15 border-accent/30 text-fg"
                             : "bg-bg border-border text-fg-muted hover:text-fg hover:border-accent/30"
                         }`}
-                        style={{ fontFamily: font.value }}
                         title={font.label}
                       >
                         {font.label}
@@ -281,16 +276,18 @@ export default function ReaderControls({ settings, updateSettings, resetSettings
               {/* Line Height */}
               <div>
                 <div className="flex items-center justify-between mb-2">
-                  <label className="text-xs text-fg-muted">Line Spacing</label>
+                  <label htmlFor="reader-line-height" className="text-xs text-fg-muted">Line Spacing</label>
                   <span className="text-xs text-fg font-mono">{settings.lineHeight.toFixed(1)}</span>
                 </div>
                 <input
+                  id="reader-line-height"
                   type="range"
                   min={1.2}
                   max={2.4}
                   step={0.1}
                   value={settings.lineHeight}
                   onChange={(e) => updateSettings({ lineHeight: Number(e.target.value) })}
+                  aria-label="Reader line spacing"
                   className="w-full accent-accent h-1.5"
                 />
               </div>
@@ -298,16 +295,18 @@ export default function ReaderControls({ settings, updateSettings, resetSettings
               {/* Content Width */}
               <div>
                 <div className="flex items-center justify-between mb-2">
-                  <label className="text-xs text-fg-muted">Content Width</label>
+                  <label htmlFor="reader-content-width" className="text-xs text-fg-muted">Content Width</label>
                   <span className="text-xs text-fg font-mono">{settings.maxWidth}px</span>
                 </div>
                 <input
+                  id="reader-content-width"
                   type="range"
                   min={500}
                   max={1000}
                   step={20}
                   value={settings.maxWidth}
                   onChange={(e) => updateSettings({ maxWidth: Number(e.target.value) })}
+                  aria-label="Reader content width"
                   className="w-full accent-accent h-1.5"
                 />
               </div>

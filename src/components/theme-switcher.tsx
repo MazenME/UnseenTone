@@ -184,8 +184,11 @@ export default function ThemeSwitcher() {
           animate={{ scale: 1, rotate: 0 }}
           transition={{ type: "spring", stiffness: 300, damping: 20 }}
           className="w-5 h-5 rounded-full border-2 border-fg/20"
-          style={{ backgroundColor: currentTheme.colors.accent }}
-        />
+        >
+          <svg className="w-full h-full" viewBox="0 0 20 20" aria-hidden="true">
+            <circle cx="10" cy="10" r="9" fill={currentTheme.colors.accent} />
+          </svg>
+        </motion.div>
         <span className="text-sm text-fg-muted group-hover:text-fg transition-colors hidden sm:block">
           {currentTheme.label}
         </span>
@@ -250,14 +253,12 @@ export default function ThemeSwitcher() {
 
                       {/* Color swatch row */}
                       <div className="relative z-10 flex items-center gap-1.5">
-                        <div
-                          className="w-4 h-4 rounded-full border border-fg/10"
-                          style={{ backgroundColor: t.colors.bg }}
-                        />
-                        <div
-                          className="w-4 h-4 rounded-full border border-fg/10"
-                          style={{ backgroundColor: t.colors.accent }}
-                        />
+                        <svg className="w-4 h-4 rounded-full border border-fg/10" viewBox="0 0 16 16" aria-hidden="true">
+                          <circle cx="8" cy="8" r="7" fill={t.colors.bg} />
+                        </svg>
+                        <svg className="w-4 h-4 rounded-full border border-fg/10" viewBox="0 0 16 16" aria-hidden="true">
+                          <circle cx="8" cy="8" r="7" fill={t.colors.accent} />
+                        </svg>
                       </div>
 
                       <span className="relative z-10 flex-1 text-left">

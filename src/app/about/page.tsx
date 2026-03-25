@@ -87,7 +87,7 @@ export default function AboutPage() {
                   key={item.title}
                   className="bg-surface border border-border rounded-xl p-4 flex gap-3 items-start"
                 >
-                  <div className="p-2 rounded-lg bg-accent/10 text-accent flex-shrink-0">
+                  <div className="p-2 rounded-lg bg-accent/10 text-accent shrink-0">
                     {item.icon}
                   </div>
                   <div>
@@ -136,3 +136,4 @@ export default function AboutPage() {
     </>
   );
 }
+

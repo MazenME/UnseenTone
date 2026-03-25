@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { useAuth } from "@/components/providers/auth-provider";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
@@ -49,7 +50,16 @@ export default function Navbar() {
 
           {/* Right side */}
           <div className="flex items-center gap-1.5 sm:gap-3">
-            <ThemeSwitcher />
+            {user && (
+              <>
+                <ReaderControls
+                  settings={settings}
+                  updateSettings={updateSettings}
+                  resetSettings={resetSettings}
+                />
+                <ThemeSwitcher />
+              </>
+            )}
             {loading ? (
               <div className="w-8 h-8 rounded-full bg-bg-secondary animate-pulse" />
             ) : user ? (
@@ -59,9 +69,11 @@ export default function Navbar() {
                   className="flex items-center gap-2 px-3 py-1.5 rounded-lg hover:bg-bg-secondary transition-colors cursor-pointer"
                 >
                   {avatarUrl ? (
-                    <img
+                    <Image
                       src={avatarUrl}
                       alt={displayName}
+                      width={32}
+                      height={32}
                       className="w-8 h-8 rounded-full object-cover"
                     />
                   ) : (
@@ -69,7 +81,7 @@ export default function Navbar() {
                       {displayName[0].toUpperCase()}
                     </div>
                   )}
-                  <span className="hidden sm:block text-sm text-fg-muted max-w-[120px] truncate">
+                  <span className="hidden sm:block text-sm text-fg-muted max-w-30 truncate">
                     {displayName}
                   </span>
                   <svg
@@ -139,6 +151,17 @@ export default function Navbar() {
                         Favourites
                       </Link>
 
+                      <Link
+                        href="/explore"
+                        onClick={() => setMenuOpen(false)}
+                        className="flex items-center gap-2 px-4 py-2.5 text-sm text-fg hover:bg-bg-secondary transition-colors"
+                      >
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 4.5h16.5m-16.5 7.5h16.5m-16.5 7.5h16.5" />
+                        </svg>
+                        Explore
+                      </Link>
+
                       <div className="border-t border-border" />
 
                       <Link
@@ -185,6 +208,12 @@ export default function Navbar() {
             ) : (
               <div className="flex items-center gap-1.5 sm:gap-3">
                 <Link
+                  href="/explore"
+                  className="px-2 py-1.5 text-xs sm:text-sm font-medium text-fg-muted hover:text-fg transition-colors"
+                >
+                  Explore
+                </Link>
+                <Link
                   href="/about"
                   className="px-2 py-1.5 text-xs sm:text-sm font-medium text-fg-muted hover:text-fg transition-colors"
                 >
@@ -216,3 +245,4 @@ export default function Navbar() {
     </nav>
   );
 }
+

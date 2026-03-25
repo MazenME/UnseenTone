@@ -2,54 +2,8 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { requireAdminScope, requireSuperAdminScope } from "@/lib/admin-scope";
 import { revalidatePath } from "next/cache";
-
-type AdminRole = "super_admin" | "novel_admin" | "reader";
-
-function normalizeRole(role?: string | null): AdminRole {
-  if (role === "admin") return "super_admin"; // legacy value
-  if (role === "super_admin") return "super_admin";
-  if (role === "novel_admin") return "novel_admin";
-  return "reader";
-}
-
-async function requireAdminWithScope() {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) throw new Error("Unauthorized");
-
-  const { data: profile } = await supabase
-    .from("users_profile")
-    .select("role")
-    .eq("id", user.id)
-    .single();
-
-  const role = normalizeRole(profile?.role);
-  if (role === "reader") throw new Error("Forbidden");
-
-  const admin = createAdminClient();
-  let allowedNovelIds: string[] = [];
-
-  if (role === "novel_admin") {
-    const { data: rows } = await admin
-      .from("novel_admins")
-      .select("novel_id")
-      .eq("admin_id", user.id);
-    allowedNovelIds = (rows || []).map((r: any) => r.novel_id);
-  }
-
-  const isSuperAdmin = role === "super_admin";
-
-  return { user, role, isSuperAdmin, allowedNovelIds, admin };
-}
-
-async function requireSuperAdmin() {
-  const ctx = await requireAdminWithScope();
-  if (!ctx.isSuperAdmin) throw new Error("Forbidden");
-  return ctx;
-}
 
 async function ensureCommentInScope(commentId: string, allowedNovelIds: string[]) {
   if (!allowedNovelIds.length) throw new Error("Forbidden");
@@ -60,8 +14,11 @@ async function ensureCommentInScope(commentId: string, allowedNovelIds: string[]
     .eq("id", commentId)
     .single();
 
-  const novelId = (comment as any)?.chapters?.novel_id;
-  if (!novelId || !allowedNovelIds.includes(novelId)) throw new Error("Forbidden");
+  const novelId = (
+    comment as { chapters?: { novel_id?: string } | Array<{ novel_id?: string }> } | null
+  )?.chapters;
+  const scopedNovelId = Array.isArray(novelId) ? novelId[0]?.novel_id : novelId?.novel_id;
+  if (!scopedNovelId || !allowedNovelIds.includes(scopedNovelId)) throw new Error("Forbidden");
 }
 
 // ── Fetch comments for moderation ────────────────────────────
@@ -73,7 +30,7 @@ export async function getComments(opts: {
   novelId?: string;
   chapterId?: string;
 }) {
-  const { isSuperAdmin, allowedNovelIds, admin } = await requireAdminWithScope();
+  const { isSuperAdmin, allowedNovelIds, admin } = await requireAdminScope();
 
   const page = opts.page ?? 1;
   const pageSize = opts.pageSize ?? 20;
@@ -116,13 +73,18 @@ export async function getComments(opts: {
 export async function getNovelsWithChapters(): Promise<
   { id: string; title: string; chapters: { id: string; title: string; chapter_number: number }[] }[]
 > {
-  const { isSuperAdmin, allowedNovelIds, admin } = await requireAdminWithScope();
+  const { isSuperAdmin, allowedNovelIds, admin } = await requireAdminScope();
 
-  let novelsQuery = admin.from("novels").select("id, title").order("created_at", { ascending: false });
+  let novelsQuery = admin
+    .from("novels")
+    .select("id, title")
+    .order("created_at", { ascending: false })
+    .limit(300);
   let chaptersQuery = admin
     .from("chapters")
     .select("id, title, chapter_number, novel_id")
-    .order("chapter_number", { ascending: true });
+    .order("chapter_number", { ascending: true })
+    .limit(1000);
 
   if (!isSuperAdmin) {
     if (!allowedNovelIds.length) return [];
@@ -145,7 +107,7 @@ export async function getNovelsWithChapters(): Promise<
 
 // ── Delete a comment (soft-delete) ───────────────────────────
 export async function deleteComment(commentId: string) {
-  const { isSuperAdmin, allowedNovelIds, admin } = await requireAdminWithScope();
+  const { isSuperAdmin, allowedNovelIds, admin } = await requireAdminScope();
   if (!isSuperAdmin) await ensureCommentInScope(commentId, allowedNovelIds);
 
   const { error } = await admin
@@ -161,7 +123,7 @@ export async function deleteComment(commentId: string) {
 
 // ── Restore a soft-deleted comment ───────────────────────────
 export async function restoreComment(commentId: string) {
-  const { isSuperAdmin, allowedNovelIds, admin } = await requireAdminWithScope();
+  const { isSuperAdmin, allowedNovelIds, admin } = await requireAdminScope();
   if (!isSuperAdmin) await ensureCommentInScope(commentId, allowedNovelIds);
 
   const { error } = await admin
@@ -177,7 +139,7 @@ export async function restoreComment(commentId: string) {
 
 // ── Hard-delete a comment permanently ────────────────────────
 export async function hardDeleteComment(commentId: string) {
-  const { isSuperAdmin, allowedNovelIds, admin } = await requireAdminWithScope();
+  const { isSuperAdmin, allowedNovelIds, admin } = await requireAdminScope();
   if (!isSuperAdmin) await ensureCommentInScope(commentId, allowedNovelIds);
 
   const { error } = await admin
@@ -193,8 +155,7 @@ export async function hardDeleteComment(commentId: string) {
 
 // ── Ban a user ───────────────────────────────────────────────
 export async function banUser(userId: string, reason?: string) {
-  await requireSuperAdmin();
-  const admin = createAdminClient();
+  const { admin } = await requireSuperAdminScope();
 
   const { error } = await admin
     .from("users_profile")
@@ -212,8 +173,7 @@ export async function banUser(userId: string, reason?: string) {
 
 // ── Unban a user ─────────────────────────────────────────────
 export async function unbanUser(userId: string) {
-  await requireSuperAdmin();
-  const admin = createAdminClient();
+  const { admin } = await requireSuperAdminScope();
 
   const { error } = await admin
     .from("users_profile")
@@ -236,8 +196,7 @@ export async function getUsers(opts: {
   filter?: "all" | "banned" | "admin";
   search?: string;
 }) {
-  await requireSuperAdmin();
-  const admin = createAdminClient();
+  const { admin } = await requireSuperAdminScope();
 
   const page = opts.page ?? 1;
   const pageSize = opts.pageSize ?? 20;
@@ -270,8 +229,7 @@ export async function getUsers(opts: {
 
 // ── Delete a user entirely (removes from auth.users, cascades to profile) ──
 export async function deleteUser(userId: string) {
-  await requireSuperAdmin();
-  const admin = createAdminClient();
+  const { admin } = await requireSuperAdminScope();
 
   // First soft-delete all their comments
   await admin
@@ -290,8 +248,7 @@ export async function deleteUser(userId: string) {
 
 // ── Delete all comments from a specific IP ───────────────────
 export async function deleteCommentsByIp(ipAddress: string) {
-  await requireSuperAdmin();
-  const admin = createAdminClient();
+  const { admin } = await requireSuperAdminScope();
 
   const { error } = await admin
     .from("comments")
@@ -328,7 +285,7 @@ export async function getCustomThemes(): Promise<CustomTheme[]> {
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("custom_themes")
-    .select("*")
+    .select("id, name, label, bg, bg_secondary, fg, fg_muted, accent, accent_hover, border_color, surface, content_text, content_heading, content_link, color_scheme, created_at")
     .order("created_at", { ascending: true });
   if (error) { console.error("getCustomThemes:", error.message); return []; }
   return (data as CustomTheme[]) || [];
@@ -349,7 +306,7 @@ export async function createCustomTheme(fields: {
   content_link: string;
   color_scheme: string;
 }) {
-  await requireSuperAdmin();
+  await requireSuperAdminScope();
   const supabase = await createClient();
 
   const name = fields.label
@@ -381,7 +338,7 @@ export async function createCustomTheme(fields: {
 }
 
 export async function deleteCustomTheme(id: string) {
-  await requireSuperAdmin();
+  await requireSuperAdminScope();
   const supabase = await createClient();
   const { error } = await supabase.from("custom_themes").delete().eq("id", id);
   if (error) return { error: error.message };
@@ -402,14 +359,14 @@ export async function getCustomFonts(): Promise<CustomFont[]> {
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("custom_fonts")
-    .select("*")
+    .select("id, name, font_family, font_url, created_at")
     .order("created_at", { ascending: true });
   if (error) { console.error("getCustomFonts:", error.message); return []; }
   return (data as CustomFont[]) || [];
 }
 
 export async function createCustomFont(font: { name: string; font_family: string; font_url?: string }) {
-  await requireSuperAdmin();
+  await requireSuperAdminScope();
   const supabase = await createClient();
 
   const row: Record<string, string> = {
@@ -426,7 +383,7 @@ export async function createCustomFont(font: { name: string; font_family: string
 }
 
 export async function deleteCustomFont(id: string) {
-  await requireSuperAdmin();
+  await requireSuperAdminScope();
   const supabase = await createClient();
   const { error } = await supabase.from("custom_fonts").delete().eq("id", id);
   if (error) return { error: error.message };
@@ -436,7 +393,7 @@ export async function deleteCustomFont(id: string) {
 
 // ── Admin role & scope management (super-admin only) ──────────
 export async function listNovels() {
-  await requireSuperAdmin();
+  await requireSuperAdminScope();
   const admin = createAdminClient();
   const { data, error } = await admin.from("novels").select("id, title").order("title", { ascending: true });
   if (error) return { novels: [], error: error.message };
@@ -444,11 +401,11 @@ export async function listNovels() {
 }
 
 export async function getNovelAssignments(userId: string) {
-  await requireSuperAdmin();
+  await requireSuperAdminScope();
   const admin = createAdminClient();
   const { data, error } = await admin.from("novel_admins").select("novel_id").eq("admin_id", userId);
   if (error) return { novelIds: [], error: error.message };
-  return { novelIds: (data || []).map((r: any) => r.novel_id) };
+  return { novelIds: (data || []).map((r: { novel_id: string }) => r.novel_id) };
 }
 
 export async function setAdminRole(params: {
@@ -456,7 +413,7 @@ export async function setAdminRole(params: {
   role: "super_admin" | "novel_admin" | "reader";
   novelIds?: string[];
 }) {
-  const { user: actingUser } = await requireSuperAdmin();
+  const { user: actingUser } = await requireSuperAdminScope();
   const admin = createAdminClient();
 
   if (params.userId === actingUser.id && params.role !== "super_admin") {

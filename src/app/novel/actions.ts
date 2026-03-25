@@ -2,6 +2,10 @@
 
 import { createClient } from "@/lib/supabase/server";
 
+type QueryResult = { data?: unknown; count?: number | null };
+type NovelRatingStatsRow = { avg_rating: number | null; rating_count: number };
+type UserRatingRow = { rating: number };
+
 // ── Novel Favourites ─────────────────────────────────────────
 
 export async function getNovelFavouriteState(
@@ -15,10 +19,10 @@ export async function getNovelFavouriteState(
   const user = session?.user ?? null;
 
   // Parallelize count + user check
-  const queries: PromiseLike<any>[] = [
+  const queries: PromiseLike<QueryResult>[] = [
     supabase
       .from("novel_favourites")
-      .select("*", { count: "exact", head: true })
+      .select("id", { count: "exact", head: true })
       .eq("novel_id", novelId),
   ];
   if (user) {
@@ -79,7 +83,7 @@ export async function toggleNovelFavourite(
 
   const { count } = await supabase
     .from("novel_favourites")
-    .select("*", { count: "exact", head: true })
+    .select("id", { count: "exact", head: true })
     .eq("novel_id", novelId);
 
   return { favourited: !existing, count: count ?? 0 };
@@ -97,12 +101,13 @@ export async function getNovelRatingState(
   } = await supabase.auth.getSession();
   const user = session?.user ?? null;
 
-  // Parallelize ratings fetch + user rating check
-  const queries: PromiseLike<any>[] = [
+  // Parallelize aggregate rating fetch + user rating check
+  const queries: PromiseLike<QueryResult>[] = [
     supabase
-      .from("novel_ratings")
-      .select("rating")
-      .eq("novel_id", novelId),
+      .from("v_novel_rating_stats")
+      .select("avg_rating, rating_count")
+      .eq("novel_id", novelId)
+      .maybeSingle(),
   ];
   if (user) {
     queries.push(
@@ -116,12 +121,13 @@ export async function getNovelRatingState(
   }
 
   const results = await Promise.all(queries);
-  const all = results[0].data || [];
-  const count = all.length;
-  const average = count > 0 ? all.reduce((s: any, r: any) => s + r.rating, 0) / count : 0;
-  const userRating = user ? (results[1].data?.rating ?? null) : null;
+  const ratingStats = (results[0].data as NovelRatingStatsRow | null) ?? null;
+  const userRatingRow = user ? ((results[1].data as UserRatingRow | null) ?? null) : null;
+  const count = ratingStats?.rating_count || 0;
+  const average = Number(ratingStats?.avg_rating || 0);
+  const userRating = user ? (userRatingRow?.rating ?? null) : null;
 
-  return { average: Math.round(average * 10) / 10, count, userRating };
+  return { average, count, userRating };
 }
 
 export async function rateNovel(
@@ -181,17 +187,18 @@ export async function getNovelInteractionState(
 }> {
   const supabase = await createClient();
 
-  const queries: PromiseLike<any>[] = [
+  const queries: PromiseLike<QueryResult>[] = [
     // 0 – favourite count
     supabase
       .from("novel_favourites")
-      .select("*", { count: "exact", head: true })
+      .select("id", { count: "exact", head: true })
       .eq("novel_id", novelId),
-    // 1 – all ratings
+    // 1 – rating aggregate
     supabase
-      .from("novel_ratings")
-      .select("rating")
-      .eq("novel_id", novelId),
+      .from("v_novel_rating_stats")
+      .select("avg_rating, rating_count")
+      .eq("novel_id", novelId)
+      .maybeSingle(),
   ];
 
   if (userId) {
@@ -218,19 +225,16 @@ export async function getNovelInteractionState(
   const results = await Promise.all(queries);
 
   const favouriteCount = results[0].count ?? 0;
-  const ratings = results[1].data || [];
-  const ratingCount = ratings.length;
-  const ratingAverage =
-    ratingCount > 0
-      ? Math.round((ratings.reduce((s: number, r: any) => s + r.rating, 0) / ratingCount) * 10) / 10
-      : 0;
+  const ratingStats = (results[1].data as NovelRatingStatsRow | null) ?? null;
+  const ratingCount = ratingStats?.rating_count || 0;
+  const ratingAverage = Number(ratingStats?.avg_rating || 0);
 
   let favourited = false;
   let userRating: number | null = null;
 
   if (userId) {
     favourited = !!results[2].data;
-    userRating = results[3].data?.rating ?? null;
+    userRating = ((results[3].data as UserRatingRow | null) ?? null)?.rating ?? null;
   }
 
   return { favourited, favouriteCount, ratingAverage, ratingCount, userRating };

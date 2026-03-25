@@ -27,7 +27,11 @@ export default function FontManagement() {
   };
 
   useEffect(() => {
-    loadFonts();
+    const timeoutId = setTimeout(() => {
+      void loadFonts();
+    }, 0);
+
+    return () => clearTimeout(timeoutId);
   }, []);
 
   const handleSubmit = () => {
@@ -185,7 +189,7 @@ export default function FontManagement() {
               {fontFamily && (
                 <div className="bg-bg border border-border rounded-lg p-4">
                   {fontUrl && (
-                    // eslint-disable-next-line @next/next/no-page-custom-font
+                     
                     <link rel="stylesheet" href={fontUrl} />
                   )}
                   <p className="text-xs text-fg-muted mb-1">Preview:</p>
@@ -232,7 +236,7 @@ export default function FontManagement() {
             >
               {/* Sample letter */}
               <div
-                className="w-12 h-12 rounded-lg bg-bg border border-border flex items-center justify-center text-xl text-fg font-bold flex-shrink-0"
+                className="w-12 h-12 rounded-lg bg-bg border border-border flex items-center justify-center text-xl text-fg font-bold shrink-0"
                 style={{ fontFamily: font.font_family }}
               >
                 Aa
@@ -248,7 +252,7 @@ export default function FontManagement() {
               <button
                 onClick={() => handleDelete(font.id)}
                 disabled={isPending}
-                className="p-2 text-fg-muted hover:text-red-400 transition-colors flex-shrink-0"
+                className="p-2 text-fg-muted hover:text-red-400 transition-colors shrink-0"
                 title="Delete font"
               >
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -262,3 +266,4 @@ export default function FontManagement() {
     </div>
   );
 }
+

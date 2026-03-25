@@ -1,10 +1,12 @@
 import { createClient } from "@/lib/supabase/server";
 import { notFound } from "next/navigation";
 import Link from "next/link";
+import Image from "next/image";
 import Navbar from "@/components/navbar";
 import NovelFavouriteButton from "@/components/novel-favourite-button";
 import NovelRating from "@/components/novel-rating";
 import { getNovelInteractionState } from "@/app/novel/actions";
+import { formatDateShort } from "@/lib/date";
 
 interface Chapter {
   id: string;
@@ -15,37 +17,16 @@ interface Chapter {
   created_at: string;
 }
 
-interface Novel {
-  id: string;
-  title: string;
-  slug: string;
-  synopsis: string | null;
-  cover_url: string | null;
-  status: string;
-  total_reads: number;
-  created_at: string;
+interface ReadingProgress {
+  chapter_id: string;
+  chapter_number: number;
+  progress_percent: number;
 }
 
-async function getNovelBySlug(slug: string) {
-  const supabase = await createClient();
-
-  const { data: novel } = await supabase
-    .from("novels")
-    .select("*")
-    .eq("slug", slug)
-    .single();
-
-  if (!novel) return null;
-
-  // Fetch chapters in parallel with auth (auth is handled by caller)
-  const { data: chapters } = await supabase
-    .from("chapters")
-    .select("id, chapter_number, title, word_count, reads, created_at")
-    .eq("novel_id", novel.id)
-    .eq("is_published", true)
-    .order("chapter_number", { ascending: true });
-
-  return { novel: novel as Novel, chapters: (chapters as Chapter[]) || [] };
+interface ChapterRatingStat {
+  chapter_id: string;
+  avg_rating: number | null;
+  rating_count: number;
 }
 
 export default async function NovelPage({ params }: { params: Promise<{ slug: string }> }) {
@@ -56,7 +37,11 @@ export default async function NovelPage({ params }: { params: Promise<{ slug: st
   // Fetch novel + chapters (need novel.id first for chapters query)
   // But we can parallelize auth with the novel lookup
   const [{ data: novel }, { data: { user } }] = await Promise.all([
-    supabase.from("novels").select("*").eq("slug", slug).single(),
+    supabase
+      .from("novels")
+      .select("id, title, slug, synopsis, cover_url, status, total_reads, created_at")
+      .eq("slug", slug)
+      .single(),
     supabase.auth.getUser(),
   ]);
 
@@ -65,7 +50,7 @@ export default async function NovelPage({ params }: { params: Promise<{ slug: st
   // Now fetch chapters + interaction state + chapter ratings all in parallel
   const userId = user?.id ?? null;
 
-  const [{ data: chapterData }, interactionState] = await Promise.all([
+  const [{ data: chapterData }, interactionState, readingProgressResult] = await Promise.all([
     supabase
       .from("chapters")
       .select("id, chapter_number, title, word_count, reads, created_at")
@@ -73,33 +58,44 @@ export default async function NovelPage({ params }: { params: Promise<{ slug: st
       .eq("is_published", true)
       .order("chapter_number", { ascending: true }),
     getNovelInteractionState(novel.id, userId),
+    userId
+      ? supabase
+          .from("reading_progress")
+          .select("chapter_id, chapter_number, progress_percent")
+          .eq("user_id", userId)
+          .eq("novel_id", novel.id)
+          .maybeSingle()
+      : Promise.resolve({ data: null, error: null }),
   ]);
 
   const chapterList = (chapterData as Chapter[]) || [];
   const chapterIds = chapterList.map((c) => c.id);
+  const readingProgress = (readingProgressResult.data as ReadingProgress | null) || null;
+  const hasResumeChapter = !!readingProgress && chapterList.some((c) => c.id === readingProgress.chapter_id);
+  const primaryReadChapterId = hasResumeChapter ? readingProgress!.chapter_id : chapterList[0]?.id;
 
   // Fetch chapter ratings (if chapters exist)
   const chapterRatingsResult = chapterIds.length > 0
-    ? await supabase.from("chapter_ratings").select("chapter_id, rating").in("chapter_id", chapterIds)
+    ? await supabase
+        .from("v_chapter_rating_stats")
+        .select("chapter_id, avg_rating, rating_count")
+        .in("chapter_id", chapterIds)
     : { data: null };
 
   const { favourited, favouriteCount: count, ratingAverage, ratingCount: novelRatingCount, userRating } = interactionState;
 
   // Aggregate chapter ratings
-  const crAll = chapterRatingsResult.data || [];
-  const chapterRatingCount = crAll.length;
+  const crAll = (chapterRatingsResult.data || []) as ChapterRatingStat[];
+  const chapterRatingCount = crAll.reduce((sum, r) => sum + (r.rating_count || 0), 0);
   const chapterRatingAvg = chapterRatingCount > 0
-    ? Math.round((crAll.reduce((s: number, r: any) => s + r.rating, 0) / chapterRatingCount) * 10) / 10
+    ? Math.round((crAll.reduce((sum, r) => sum + (Number(r.avg_rating || 0) * (r.rating_count || 0)), 0) / chapterRatingCount) * 10) / 10
     : 0;
-  const byChapter: Record<string, number[]> = {};
-  for (const r of crAll) {
-    if (!byChapter[r.chapter_id]) byChapter[r.chapter_id] = [];
-    byChapter[r.chapter_id].push(r.rating);
-  }
   const perChapterRating: Record<string, { avg: number; count: number }> = {};
-  for (const [cid, ratings] of Object.entries(byChapter)) {
-    const avg = ratings.reduce((s, v) => s + v, 0) / ratings.length;
-    perChapterRating[cid] = { avg: Math.round(avg * 10) / 10, count: ratings.length };
+  for (const r of crAll) {
+    perChapterRating[r.chapter_id] = {
+      avg: Number(r.avg_rating || 0),
+      count: r.rating_count || 0,
+    };
   }
 
   const chapters = chapterList;
@@ -112,12 +108,14 @@ export default async function NovelPage({ params }: { params: Promise<{ slug: st
         <section className="relative">
           {novel.cover_url && (
             <div className="fixed inset-x-0 top-0 h-screen -z-10">
-              <img
+              <Image
                 src={novel.cover_url}
                 alt=""
-                className="w-full h-full object-cover object-center"
+                fill
+                sizes="100vw"
+                className="object-cover object-center"
               />
-              <div className="absolute inset-0 bg-gradient-to-b from-bg/40 via-bg/70 to-bg" />
+              <div className="absolute inset-0 bg-linear-to-b from-bg/40 via-bg/70 to-bg" />
             </div>
           )}
 
@@ -125,11 +123,13 @@ export default async function NovelPage({ params }: { params: Promise<{ slug: st
             <div className="flex flex-col sm:flex-row gap-8 items-center sm:items-start">
               {/* Cover Thumbnail */}
               {novel.cover_url && (
-                <div className="w-40 sm:w-52 flex-shrink-0 rounded-xl overflow-hidden shadow-2xl border border-border">
-                  <img
+                <div className="relative w-40 sm:w-52 shrink-0 rounded-xl overflow-hidden shadow-2xl border border-border">
+                  <Image
                     src={novel.cover_url}
                     alt={novel.title}
-                    className="w-full aspect-[2/3] object-cover"
+                    width={320}
+                    height={480}
+                    className="w-full aspect-2/3 object-cover"
                   />
                 </div>
               )}
@@ -175,18 +175,18 @@ export default async function NovelPage({ params }: { params: Promise<{ slug: st
                     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
                     </svg>
-                    {new Date(novel.created_at).toLocaleDateString()}
+                    {formatDateShort(novel.created_at)}
                   </span>
                 </div>
 
                 {/* Start Reading CTA + Favourite */}
                 <div className="flex flex-wrap items-center justify-center sm:justify-start gap-4 mt-6">
-                  {chapters.length > 0 && (
+                  {chapters.length > 0 && primaryReadChapterId && (
                     <Link
-                      href={`/read/${chapters[0].id}`}
+                      href={`/read/${primaryReadChapterId}`}
                       className="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-accent hover:bg-accent-hover text-white font-medium transition-colors"
                     >
-                      Start Reading
+                      {hasResumeChapter ? "Continue Reading" : "Start Reading"}
                       <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M13 7l5 5m0 0l-5 5m5-5H6" />
                       </svg>
@@ -237,14 +237,14 @@ export default async function NovelPage({ params }: { params: Promise<{ slug: st
             </div>
           ) : (
             <div className="space-y-2">
-              {chapters.map((chapter, index) => (
+              {chapters.map((chapter) => (
                 <Link
                   key={chapter.id}
                   href={`/read/${chapter.id}`}
                   className="group flex items-center gap-4 p-4 bg-surface border border-border rounded-xl hover:border-accent/50 hover:bg-surface/80 transition-all"
                 >
                   {/* Chapter Number */}
-                  <div className="w-10 h-10 rounded-lg bg-accent/10 flex items-center justify-center flex-shrink-0">
+                  <div className="w-10 h-10 rounded-lg bg-accent/10 flex items-center justify-center shrink-0">
                     <span className="text-sm font-bold text-accent">{chapter.chapter_number}</span>
                   </div>
 
@@ -270,13 +270,13 @@ export default async function NovelPage({ params }: { params: Promise<{ slug: st
                         </>
                       )}
                       <span>&middot;</span>
-                      <span>{new Date(chapter.created_at).toLocaleDateString()}</span>
+                      <span>{formatDateShort(chapter.created_at)}</span>
                     </div>
                   </div>
 
                   {/* Arrow */}
                   <svg
-                    className="w-5 h-5 text-fg-muted group-hover:text-accent group-hover:translate-x-1 transition-all flex-shrink-0"
+                    className="w-5 h-5 text-fg-muted group-hover:text-accent group-hover:translate-x-1 transition-all shrink-0"
                     fill="none"
                     viewBox="0 0 24 24"
                     stroke="currentColor"

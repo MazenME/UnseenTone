@@ -53,11 +53,15 @@ function setCachedProfile(profile: UserProfile | null) {
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
-  const [profile, setProfile] = useState<UserProfile | null>(getCachedProfile);
+  const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const signingOut = useRef(false);
   const initDone = useRef(false);
   const supabase = createClient();
+
+  useEffect(() => {
+    setProfile(getCachedProfile());
+  }, []);
 
   const fetchProfile = useCallback(async (authUser: User, isNewSignup = false) => {
     // Don't fetch profile if we're in the middle of signing out

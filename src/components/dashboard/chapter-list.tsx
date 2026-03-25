@@ -56,7 +56,7 @@ export default function ChapterList({
     setLoading(false);
   };
 
-  const handleToggleDirection = async (id: string, currentDir: "ltr" | "rtl") => {
+  const handleToggleDirection = async (id: string) => {
     setDirLoading(id);
     const result = await toggleChapterDirection(id);
     if (result.success && result.direction) {
@@ -83,6 +83,8 @@ export default function ChapterList({
           <select
             value={filterNovel}
             onChange={(e) => setFilterNovel(e.target.value)}
+            title="Filter chapters by novel"
+            aria-label="Filter chapters by novel"
             className="px-3 py-2 rounded-lg bg-bg-secondary border border-border text-fg text-sm focus:outline-none focus:ring-2 focus:ring-accent"
           >
             <option value="all">All Novels</option>
@@ -133,7 +135,7 @@ export default function ChapterList({
                   <tr key={chapter.id} className="hover:bg-bg-secondary/50 transition-colors">
                     <td className="px-4 py-3 text-sm text-fg-muted">{chapter.chapter_number}</td>
                     <td className="px-4 py-3">
-                      <p className="text-sm font-medium text-fg truncate max-w-[200px]">{chapter.title}</p>
+                      <p className="text-sm font-medium text-fg truncate max-w-50">{chapter.title}</p>
                     </td>
                     <td className="px-4 py-3 text-sm text-fg-muted hidden md:table-cell">
                       {chapter.novels?.title || "Unknown"}
@@ -161,7 +163,7 @@ export default function ChapterList({
                         const isRtl = dir === "rtl";
                         return (
                           <button
-                            onClick={() => handleToggleDirection(chapter.id, dir)}
+                                      onClick={() => handleToggleDirection(chapter.id)}
                             disabled={dirLoading === chapter.id}
                             className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium transition-colors cursor-pointer ${
                               isRtl
@@ -245,3 +247,4 @@ export default function ChapterList({
     </div>
   );
 }
+

@@ -4,7 +4,6 @@ import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { createNovel, updateNovel, deleteNovel } from "@/app/dashboard/novels/actions";
 import Image from "next/image";
-import { useRouter } from "next/navigation";
 
 type Novel = {
   id: string;
@@ -22,7 +21,6 @@ type Novel = {
 };
 
 export default function NovelManager({ initialNovels }: { initialNovels: Novel[] }) {
-  const router = useRouter();
   const [novels, setNovels] = useState(initialNovels);
   const [showForm, setShowForm] = useState(false);
   const [editingNovel, setEditingNovel] = useState<Novel | null>(null);
@@ -51,7 +49,7 @@ export default function NovelManager({ initialNovels }: { initialNovels: Novel[]
     if (editingNovel && result.novel) {
       setNovels((prev) => prev.map((n) => (n.id === editingNovel.id ? { ...n, ...result.novel } : n)));
     } else if (!editingNovel && result.novel) {
-      setNovels((prev) => [result.novel as any, ...prev]);
+      setNovels((prev) => [result.novel as Novel, ...prev]);
     }
 
     setShowForm(false);
@@ -125,6 +123,8 @@ export default function NovelManager({ initialNovels }: { initialNovels: Novel[]
                 </h3>
                 <button
                   onClick={() => { setShowForm(false); setEditingNovel(null); }}
+                  title="Close dialog"
+                  aria-label="Close dialog"
                   className="p-1 text-fg-muted hover:text-fg rounded cursor-pointer"
                 >
                   <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -281,7 +281,7 @@ export default function NovelManager({ initialNovels }: { initialNovels: Novel[]
 
               <div className="p-4">
                 <h4 className="text-fg font-semibold mb-1 truncate">{novel.title}</h4>
-                <p className="text-sm text-fg-muted line-clamp-2 mb-3 min-h-[2.5rem]">
+                <p className="text-sm text-fg-muted line-clamp-2 mb-3 min-h-10">
                   {novel.synopsis || "No synopsis"}
                 </p>
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mb-2 text-xs text-fg-muted">
@@ -366,3 +366,4 @@ export default function NovelManager({ initialNovels }: { initialNovels: Novel[]
     </div>
   );
 }
+

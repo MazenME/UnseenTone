@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import Navbar from "@/components/navbar";
 import Link from "next/link";
+import { formatDateShort } from "@/lib/date";
 
 interface BookmarkRow {
   id: string;
@@ -17,21 +18,36 @@ interface BookmarkRow {
   };
 }
 
-export default async function BookmarksPage() {
+export default async function BookmarksPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ page?: string }>;
+}) {
+  const PAGE_SIZE = 20;
   const supabase = await createClient();
+  const params = await searchParams;
+  const pageParam = Number(params.page ?? "1");
+  const page = Number.isFinite(pageParam) ? Math.max(1, pageParam) : 1;
+  const from = (page - 1) * PAGE_SIZE;
+  const to = from + PAGE_SIZE - 1;
   const {
     data: { user },
   } = await supabase.auth.getUser();
 
   if (!user) redirect("/login?redirect=/bookmarks");
 
-  const { data, error } = await supabase
+  const { data, count, error } = await supabase
     .from("bookmarks")
-    .select("id, created_at, chapters(id, title, chapter_number, novels(title, slug))")
+    .select("id, created_at, chapters(id, title, chapter_number, novels(title, slug))", { count: "exact" })
     .eq("user_id", user.id)
-    .order("created_at", { ascending: false });
+    .order("created_at", { ascending: false })
+    .range(from, to);
 
   const bookmarks = (error ? [] : (data as unknown as BookmarkRow[])) || [];
+  const totalCount = error ? 0 : (count ?? 0);
+  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
+  const hasPrev = page > 1;
+  const hasNext = page < totalPages;
 
   return (
     <div className="min-h-screen bg-bg">
@@ -61,41 +77,59 @@ export default async function BookmarksPage() {
             </p>
           </div>
         ) : (
-          <div className="space-y-2">
-            {bookmarks.map((b) => (
-              <Link
-                key={b.id}
-                href={`/read/${b.chapters.id}`}
-                className="flex items-center gap-4 bg-surface border border-border rounded-xl p-4 hover:border-accent/40 transition-all group"
-              >
-                {/* Icon */}
-                <div className="w-10 h-10 rounded-lg bg-accent/10 border border-accent/20 flex items-center justify-center flex-shrink-0">
-                  <span className="text-sm font-bold text-accent">
-                    {b.chapters.chapter_number}
+          <div className="space-y-4">
+            <div className="space-y-2">
+              {bookmarks.map((b) => (
+                <Link
+                  key={b.id}
+                  href={`/read/${b.chapters.id}`}
+                  className="flex items-center gap-4 bg-surface border border-border rounded-xl p-4 hover:border-accent/40 transition-all group"
+                >
+                  {/* Icon */}
+                  <div className="w-10 h-10 rounded-lg bg-accent/10 border border-accent/20 flex items-center justify-center shrink-0">
+                    <span className="text-sm font-bold text-accent">
+                      {b.chapters.chapter_number}
+                    </span>
+                  </div>
+
+                  {/* Info */}
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-fg group-hover:text-accent transition-colors truncate">
+                      {b.chapters.title}
+                    </p>
+                    <p className="text-xs text-fg-muted truncate">
+                      {b.chapters.novels.title} &middot; Chapter {b.chapters.chapter_number}
+                    </p>
+                  </div>
+
+                  {/* Date */}
+                  <span className="text-xs text-fg-muted shrink-0 hidden sm:block">
+                    {formatDateShort(b.created_at)}
                   </span>
-                </div>
 
-                {/* Info */}
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold text-fg group-hover:text-accent transition-colors truncate">
-                    {b.chapters.title}
-                  </p>
-                  <p className="text-xs text-fg-muted truncate">
-                    {b.chapters.novels.title} &middot; Chapter {b.chapters.chapter_number}
-                  </p>
-                </div>
+                  {/* Arrow */}
+                  <svg className="w-4 h-4 text-fg-muted group-hover:text-accent group-hover:translate-x-0.5 transition-all shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                  </svg>
+                </Link>
+              ))}
+            </div>
 
-                {/* Date */}
-                <span className="text-xs text-fg-muted flex-shrink-0 hidden sm:block">
-                  {new Date(b.created_at).toLocaleDateString()}
-                </span>
+            <div className="flex items-center justify-between gap-3">
+              {hasPrev ? (
+                <Link href={`/bookmarks?page=${page - 1}`} className="text-sm px-3 py-2 rounded-lg border border-border hover:border-accent/40 transition-colors">
+                  Previous
+                </Link>
+              ) : <span />}
 
-                {/* Arrow */}
-                <svg className="w-4 h-4 text-fg-muted group-hover:text-accent group-hover:translate-x-0.5 transition-all flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-                </svg>
-              </Link>
-            ))}
+              <span className="text-xs text-fg-muted">Page {page} of {totalPages}</span>
+
+              {hasNext ? (
+                <Link href={`/bookmarks?page=${page + 1}`} className="text-sm px-3 py-2 rounded-lg border border-border hover:border-accent/40 transition-colors">
+                  Next
+                </Link>
+              ) : <span />}
+            </div>
           </div>
         )}
       </main>

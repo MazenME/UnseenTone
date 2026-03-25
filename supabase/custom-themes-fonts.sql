@@ -33,7 +33,11 @@ CREATE POLICY "Anyone can read custom themes"
 
 CREATE POLICY "Admins can manage custom themes"
   ON public.custom_themes FOR ALL USING (
-    EXISTS (SELECT 1 FROM public.users_profile WHERE id = auth.uid() AND role = 'admin')
+    EXISTS (
+      SELECT 1 FROM public.users_profile
+      WHERE id = auth.uid()
+        AND role IN ('admin', 'super_admin')
+    )
   );
 
 -- ── Custom Fonts ─────────────────────────────────────────────
@@ -52,5 +56,9 @@ CREATE POLICY "Anyone can read custom fonts"
 
 CREATE POLICY "Admins can manage custom fonts"
   ON public.custom_fonts FOR ALL USING (
-    EXISTS (SELECT 1 FROM public.users_profile WHERE id = auth.uid() AND role = 'admin')
+    EXISTS (
+      SELECT 1 FROM public.users_profile
+      WHERE id = auth.uid()
+        AND role IN ('admin', 'super_admin')
+    )
   );

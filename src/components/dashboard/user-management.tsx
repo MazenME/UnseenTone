@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import Image from "next/image";
 import {
   getUsers,
   banUser,
@@ -56,6 +57,7 @@ export default function UserManagement() {
 
   const pageSize = 20;
   const totalPages = Math.ceil(total / pageSize);
+  const adminRoleOptions: Array<"super_admin" | "novel_admin" | "reader"> = ["super_admin", "novel_admin", "reader"];
 
   const fetchUsers = useCallback(async () => {
     setLoading(true);
@@ -66,7 +68,11 @@ export default function UserManagement() {
   }, [page, pageSize, filter, search]);
 
   useEffect(() => {
-    fetchUsers();
+    const timeoutId = setTimeout(() => {
+      void fetchUsers();
+    }, 0);
+
+    return () => clearTimeout(timeoutId);
   }, [fetchUsers]);
 
   const handleSearch = (e: React.FormEvent) => {
@@ -131,7 +137,11 @@ export default function UserManagement() {
   const toggleNovelSelection = (id: string) => {
     if (!adminModal) return;
     const next = new Set(adminModal.selected);
-    next.has(id) ? next.delete(id) : next.add(id);
+    if (next.has(id)) {
+      next.delete(id);
+    } else {
+      next.add(id);
+    }
     setAdminModal({ ...adminModal, selected: next });
   };
 
@@ -234,11 +244,13 @@ export default function UserManagement() {
                       {/* User */}
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-3">
-                          <div className="w-8 h-8 rounded-full bg-accent/20 flex items-center justify-center flex-shrink-0">
+                          <div className="w-8 h-8 rounded-full bg-accent/20 flex items-center justify-center shrink-0">
                             {user.avatar_url ? (
-                              <img
+                              <Image
                                 src={user.avatar_url}
                                 alt=""
+                                width={32}
+                                height={32}
                                 className="w-8 h-8 rounded-full object-cover"
                               />
                             ) : (
@@ -248,10 +260,10 @@ export default function UserManagement() {
                             )}
                           </div>
                           <div className="min-w-0">
-                            <div className="font-medium text-fg truncate max-w-[120px] sm:max-w-[200px]">
+                            <div className="font-medium text-fg truncate max-w-30 sm:max-w-50">
                               {user.display_name || "—"}
                             </div>
-                            <div className="text-xs text-fg-muted truncate max-w-[120px] sm:max-w-[200px]">
+                            <div className="text-xs text-fg-muted truncate max-w-30 sm:max-w-50">
                               {user.email}
                             </div>
                           </div>
@@ -297,7 +309,7 @@ export default function UserManagement() {
                               Banned
                             </span>
                             {user.ban_reason && (
-                              <div className="text-[11px] text-fg-muted mt-1 max-w-[150px] truncate" title={user.ban_reason}>
+                              <div className="text-[11px] text-fg-muted mt-1 max-w-37.5 truncate" title={user.ban_reason}>
                                 {user.ban_reason}
                               </div>
                             )}
@@ -440,14 +452,14 @@ export default function UserManagement() {
               <p className="text-sm text-fg-muted mb-4">{adminModal.name}</p>
 
               <div className="space-y-3">
-                {["super_admin", "novel_admin", "reader"].map((r) => (
+                {adminRoleOptions.map((r) => (
                   <label key={r} className="flex items-center gap-3 text-sm text-fg cursor-pointer">
                     <input
                       type="radio"
                       name="role"
                       value={r}
                       checked={adminModal.role === r}
-                      onChange={() => setAdminModal({ ...adminModal, role: r as any })}
+                      onChange={() => setAdminModal({ ...adminModal, role: r })}
                       className="accent-accent"
                     />
                     <span className="font-medium">
@@ -571,3 +583,4 @@ export default function UserManagement() {
     </div>
   );
 }
+

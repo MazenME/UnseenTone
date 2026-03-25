@@ -68,7 +68,8 @@ export default function BookmarkButton({ chapterId, initialBookmarked, userId }:
           {bookmarked ? "Bookmarked" : "Bookmark"}
         </span>
       </button>
-      {error && <p className="text-xs text-red-400 max-w-[200px] text-center">{error}</p>}
+      {error && <p className="text-xs text-red-400 max-w-50 text-center">{error}</p>}
     </div>
   );
 }
+

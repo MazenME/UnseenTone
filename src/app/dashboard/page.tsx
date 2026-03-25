@@ -1,5 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import Image from "next/image";
+import { formatDateShort } from "@/lib/date";
 
 interface NovelAnalytics {
   id: string;
@@ -29,6 +31,18 @@ interface NovelAnalytics {
   }[];
 }
 
+interface NovelAdminRow {
+  novel_id: string;
+}
+
+interface DashboardAnalyticsPayload {
+  totalUsers: number;
+  totalNovels: number;
+  totalReads: number;
+  totalComments: number;
+  novelAnalytics: NovelAnalytics[];
+}
+
 async function getAnalytics() {
   const supabase = await createClient();
   const admin = createAdminClient();
@@ -48,7 +62,7 @@ async function getAnalytics() {
   let allowedNovelIds: string[] | null = null;
   if (role === "novel_admin" && user?.id) {
     const { data: rows } = await admin.from("novel_admins").select("novel_id").eq("admin_id", user.id);
-    allowedNovelIds = (rows || []).map((r: any) => r.novel_id);
+    allowedNovelIds = ((rows || []) as NovelAdminRow[]).map((r) => r.novel_id);
     if (!allowedNovelIds.length) {
       return {
         role,
@@ -61,131 +75,31 @@ async function getAnalytics() {
     }
   }
 
-  // ─── Phase 1: Independent queries in parallel ───
-  const [
-    { count: totalUsers },
-    { data: novels },
-    { data: allNovelRatings },
-    { data: allChapterRatingsRaw },
-  ] = await Promise.all([
-    role === "novel_admin" ? { count: null } : supabase.from("users_profile").select("*", { count: "exact", head: true }),
-    role === "novel_admin" && allowedNovelIds
-      ? supabase
-          .from("novels")
-          .select("id, title, slug, status, total_reads, created_at, cover_url")
-          .in("id", allowedNovelIds)
-          .order("created_at", { ascending: false })
-      : supabase
-          .from("novels")
-          .select("id, title, slug, status, total_reads, created_at, cover_url")
-          .order("created_at", { ascending: false }),
-    role === "novel_admin" && allowedNovelIds
-      ? supabase.from("novel_ratings").select("novel_id, rating").in("novel_id", allowedNovelIds)
-      : supabase.from("novel_ratings").select("novel_id, rating"),
-    role === "novel_admin" && allowedNovelIds
-      ? supabase.from("chapter_ratings").select("chapter_id, rating, chapters(novel_id)").in("chapters.novel_id", allowedNovelIds)
-      : supabase.from("chapter_ratings").select("chapter_id, rating, chapters(novel_id)"),
-  ]);
-
-  const chapterQuery = supabase
-    .from("chapters")
-    .select("id, novel_id, chapter_number, title, reads, word_count, created_at")
-    .eq("is_published", true)
-    .order("chapter_number", { ascending: true });
-
-  const { data: allChapters } =
-    role === "novel_admin" && allowedNovelIds
-      ? await chapterQuery.in("novel_id", allowedNovelIds)
-      : await chapterQuery;
-
-  const totalReads = (novels || []).reduce((sum, n) => sum + (n.total_reads || 0), 0);
-
-  // ─── Aggregate novel ratings by novel ─────────────────────────
-  const nrMap: Record<string, { sum: number; count: number }> = {};
-  for (const r of (allNovelRatings || []) as any[]) {
-    if (!nrMap[r.novel_id]) nrMap[r.novel_id] = { sum: 0, count: 0 };
-    nrMap[r.novel_id].sum += r.rating;
-    nrMap[r.novel_id].count += 1;
-  }
-
-  // ─── Aggregate chapter ratings by novel AND by chapter ────────
-  const crByNovel: Record<string, { sum: number; count: number }> = {};
-  const crByChapter: Record<string, { sum: number; count: number }> = {};
-  for (const r of (allChapterRatingsRaw || []) as any[]) {
-    const nid = r.chapters?.novel_id;
-    if (nid) {
-      if (!crByNovel[nid]) crByNovel[nid] = { sum: 0, count: 0 };
-      crByNovel[nid].sum += r.rating;
-      crByNovel[nid].count += 1;
-    }
-    if (!crByChapter[r.chapter_id]) crByChapter[r.chapter_id] = { sum: 0, count: 0 };
-    crByChapter[r.chapter_id].sum += r.rating;
-    crByChapter[r.chapter_id].count += 1;
-  }
-
-  // ─── Group chapters by novel ──────────────────────────────────
-  const chaptersByNovel: Record<string, any[]> = {};
-  for (const ch of allChapters || []) {
-    if (!chaptersByNovel[ch.novel_id]) chaptersByNovel[ch.novel_id] = [];
-    chaptersByNovel[ch.novel_id].push(ch);
-  }
-
-  // ─── Phase 2: Fetch ALL comment counts in ONE query ───────────
-  const allChapterIds = (allChapters || []).map((c) => c.id);
-  const commentCountMap: Record<string, number> = {};
-
-  if (allChapterIds.length > 0) {
-    const { data: allCommentRows } = await supabase
-      .from("comments")
-      .select("chapter_id")
-      .in("chapter_id", allChapterIds)
-      .eq("is_deleted", false);
-
-    for (const c of allCommentRows || []) {
-      commentCountMap[c.chapter_id] = (commentCountMap[c.chapter_id] || 0) + 1;
-    }
-  }
-
-  // ─── Build novel analytics (pure JS, no more queries) ─────────
-  const novelAnalytics: NovelAnalytics[] = (novels || []).map((novel) => {
-    const chapterList = chaptersByNovel[novel.id] || [];
-    const totalWords = chapterList.reduce((sum: number, c: any) => sum + (c.word_count || 0), 0);
-
-    let novelCommentCount = 0;
-    const chaptersWithData = chapterList.map((ch: any) => {
-      const commentCount = commentCountMap[ch.id] || 0;
-      novelCommentCount += commentCount;
-      const chRat = crByChapter[ch.id];
-      return {
-        ...ch,
-        comment_count: commentCount,
-        avg_rating: chRat ? Math.round((chRat.sum / chRat.count) * 10) / 10 : 0,
-        rating_count: chRat?.count || 0,
-      };
-    });
-
-    return {
-      ...novel,
-      chapter_count: chapterList.length,
-      total_words: totalWords,
-      total_comments: novelCommentCount,
-      novel_avg_rating: nrMap[novel.id] ? Math.round((nrMap[novel.id].sum / nrMap[novel.id].count) * 10) / 10 : 0,
-      novel_rating_count: nrMap[novel.id]?.count || 0,
-      chapter_avg_rating: crByNovel[novel.id] ? Math.round((crByNovel[novel.id].sum / crByNovel[novel.id].count) * 10) / 10 : 0,
-      chapter_rating_count: crByNovel[novel.id]?.count || 0,
-      chapters: chaptersWithData,
-    };
+  const { data: rpcPayload, error: rpcError } = await admin.rpc("get_dashboard_analytics", {
+    p_role: role,
+    p_allowed_novel_ids: role === "novel_admin" ? allowedNovelIds : null,
   });
 
-  const totalComments = novelAnalytics.reduce((sum, n) => sum + n.total_comments, 0);
+  if (rpcError || !rpcPayload) {
+    return {
+      role,
+      totalUsers: 0,
+      totalNovels: 0,
+      totalReads: 0,
+      totalComments: 0,
+      novelAnalytics: [],
+    };
+  }
+
+  const payload = rpcPayload as DashboardAnalyticsPayload;
 
   return {
     role,
-    totalUsers: totalUsers || 0,
-    totalNovels: novels?.length || 0,
-    totalReads,
-    totalComments,
-    novelAnalytics,
+    totalUsers: payload.totalUsers || 0,
+    totalNovels: payload.totalNovels || 0,
+    totalReads: payload.totalReads || 0,
+    totalComments: payload.totalComments || 0,
+    novelAnalytics: payload.novelAnalytics || [],
   };
 }
 
@@ -320,10 +234,12 @@ export default async function DashboardPage() {
                 {/* Novel Header */}
                 <div className="flex items-center gap-4 p-5 border-b border-border">
                   {novel.cover_url && (
-                    <img
+                    <Image
                       src={novel.cover_url}
                       alt=""
-                      className="w-12 h-16 rounded-lg object-cover flex-shrink-0"
+                      width={48}
+                      height={64}
+                      className="w-12 h-16 rounded-lg object-cover shrink-0"
                     />
                   )}
                   <div className="flex-1 min-w-0">
@@ -344,7 +260,7 @@ export default async function DashboardPage() {
                       </span>
                     </div>
                     <p className="text-xs text-fg-muted mt-0.5">
-                      Created {new Date(novel.created_at).toLocaleDateString()}
+                      Created {formatDateShort(novel.created_at)}
                     </p>
                   </div>
                 </div>
@@ -410,15 +326,26 @@ export default async function DashboardPage() {
                           return (
                             <tr key={ch.id} className="hover:bg-bg-secondary/50 transition-colors">
                               <td className="px-5 py-2.5 text-fg-muted">{ch.chapter_number}</td>
-                              <td className="px-5 py-2.5 text-fg font-medium max-w-[250px] truncate">
+                              <td className="px-5 py-2.5 text-fg font-medium max-w-62.5 truncate">
                                 {ch.title}
                               </td>
                               <td className="px-5 py-2.5 text-right">
                                 <div className="flex items-center justify-end gap-2">
                                   <div className="w-20 h-1.5 bg-border rounded-full overflow-hidden hidden sm:block">
                                     <div
-                                      className="h-full bg-accent rounded-full"
-                                      style={{ width: `${barWidth}%` }}
+                                      className={`h-full bg-accent rounded-full ${
+                                        barWidth >= 90
+                                          ? "w-full"
+                                          : barWidth >= 75
+                                          ? "w-3/4"
+                                          : barWidth >= 50
+                                          ? "w-1/2"
+                                          : barWidth >= 25
+                                          ? "w-1/4"
+                                          : barWidth > 0
+                                          ? "w-2"
+                                          : "w-0"
+                                      }`}
                                     />
                                   </div>
                                   <span className="text-fg tabular-nums">{ch.reads.toLocaleString()}</span>
@@ -438,7 +365,7 @@ export default async function DashboardPage() {
                                 )}
                               </td>
                               <td className="px-5 py-2.5 text-right text-fg-muted hidden md:table-cell">
-                                {new Date(ch.created_at).toLocaleDateString()}
+                                {formatDateShort(ch.created_at)}
                               </td>
                             </tr>
                           );
@@ -455,3 +382,4 @@ export default async function DashboardPage() {
     </div>
   );
 }
+

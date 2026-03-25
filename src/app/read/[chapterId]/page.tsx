@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { notFound } from "next/navigation";
 import ChapterReaderClient from "@/components/chapter-reader-client";
 import { getChapterInteractionState } from "@/app/read/actions";
+import { sanitizeChapterHtml } from "@/lib/sanitize-chapter-html";
 
 interface Chapter {
   id: string;
@@ -33,7 +34,7 @@ async function getChapterData(chapterId: string) {
   // Fetch the chapter
   const { data: chapter } = await supabase
     .from("chapters")
-    .select("*")
+    .select("id, novel_id, chapter_number, title, content, word_count, reads, text_direction, created_at")
     .eq("id", chapterId)
     .eq("is_published", true)
     .single();
@@ -69,7 +70,10 @@ async function getChapterData(chapterId: string) {
   supabase.rpc("increment_chapter_reads", { p_chapter_id: chapterId }).then(() => {});
 
   return {
-    chapter: chapter as Chapter,
+    chapter: {
+      ...(chapter as Chapter),
+      content: sanitizeChapterHtml((chapter as Chapter).content),
+    },
     novel: novel as Novel,
     prevChapter: (prevChapters?.[0] as SiblingChapter) || null,
     nextChapter: (nextChapters?.[0] as SiblingChapter) || null,

@@ -65,7 +65,7 @@ export default function RatingStars({
             onMouseEnter={() => userId && setHovered(star)}
             onMouseLeave={() => setHovered(null)}
             disabled={!userId || pending}
-            aria-label={`Rate ${star} out of 10`}
+            aria-label={`Rate ${star} out of 10 for this ${type}`}
             className={`transition-all ${
               !userId ? "cursor-not-allowed opacity-50" : "cursor-pointer"
             } ${pending ? "animate-pulse" : ""}`}

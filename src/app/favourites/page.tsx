@@ -2,6 +2,8 @@ import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import Navbar from "@/components/navbar";
 import Link from "next/link";
+import Image from "next/image";
+import { formatDateShort } from "@/lib/date";
 
 interface LikeRow {
   id: string;
@@ -31,8 +33,18 @@ interface NovelFavRow {
   };
 }
 
-export default async function FavouritesPage() {
+export default async function FavouritesPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ page?: string }>;
+}) {
+  const PAGE_SIZE = 20;
   const supabase = await createClient();
+  const params = await searchParams;
+  const pageParam = Number(params.page ?? "1");
+  const page = Number.isFinite(pageParam) ? Math.max(1, pageParam) : 1;
+  const from = (page - 1) * PAGE_SIZE;
+  const to = from + PAGE_SIZE - 1;
   const {
     data: { user },
   } = await supabase.auth.getUser();
@@ -40,21 +52,27 @@ export default async function FavouritesPage() {
   if (!user) redirect("/login?redirect=/favourites");
 
   // Fetch chapter likes AND novel favourites in parallel (instead of sequential)
-  const [{ data, error }, { data: novelData, error: novelErr }] = await Promise.all([
+  const [{ data, count: chapterCount, error }, { data: novelData, count: novelCount, error: novelErr }] = await Promise.all([
     supabase
       .from("chapter_likes")
-      .select("id, created_at, chapters(id, title, chapter_number, word_count, novels(title, slug))")
+      .select("id, created_at, chapters(id, title, chapter_number, word_count, novels(title, slug))", { count: "exact" })
       .eq("user_id", user.id)
-      .order("created_at", { ascending: false }),
+      .order("created_at", { ascending: false })
+      .range(from, to),
     supabase
       .from("novel_favourites")
-      .select("id, created_at, novels(id, title, slug, cover_url, status, total_reads)")
+      .select("id, created_at, novels(id, title, slug, cover_url, status, total_reads)", { count: "exact" })
       .eq("user_id", user.id)
-      .order("created_at", { ascending: false }),
+      .order("created_at", { ascending: false })
+      .range(from, to),
   ]);
 
   const favourites = (error ? [] : (data as unknown as LikeRow[])) || [];
   const novelFavourites = (novelErr ? [] : (novelData as unknown as NovelFavRow[])) || [];
+  const totalRows = Math.max(chapterCount ?? 0, novelCount ?? 0);
+  const totalPages = Math.max(1, Math.ceil(totalRows / PAGE_SIZE));
+  const hasPrev = page > 1;
+  const hasNext = page < totalPages;
 
   return (
     <div className="min-h-screen bg-bg">
@@ -90,13 +108,15 @@ export default async function FavouritesPage() {
                 className="flex items-center gap-4 bg-surface border border-border rounded-xl p-4 hover:border-accent/40 transition-all group"
               >
                 {nf.novels.cover_url ? (
-                  <img
+                  <Image
                     src={nf.novels.cover_url}
                     alt={nf.novels.title}
-                    className="w-12 h-16 rounded-lg object-cover flex-shrink-0 border border-border"
+                    width={48}
+                    height={64}
+                    className="w-12 h-16 rounded-lg object-cover shrink-0 border border-border"
                   />
                 ) : (
-                  <div className="w-12 h-16 rounded-lg bg-accent/10 border border-border flex items-center justify-center flex-shrink-0">
+                  <div className="w-12 h-16 rounded-lg bg-accent/10 border border-border flex items-center justify-center shrink-0">
                     <svg className="w-5 h-5 text-red-400" fill="currentColor" viewBox="0 0 24 24">
                       <path d="M21 8.25c0-2.485-2.099-4.5-4.688-4.5-1.935 0-3.597 1.126-4.312 2.733-.715-1.607-2.377-2.733-4.313-2.733C5.1 3.75 3 5.765 3 8.25c0 7.22 9 12 9 12s9-4.78 9-12z" />
                     </svg>
@@ -109,7 +129,7 @@ export default async function FavouritesPage() {
                   <p className="text-xs text-fg-muted capitalize">{nf.novels.status}</p>
                   <p className="text-xs text-fg-muted">{nf.novels.total_reads.toLocaleString()} reads</p>
                 </div>
-                <svg className="w-4 h-4 text-fg-muted group-hover:text-accent group-hover:translate-x-0.5 transition-all flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <svg className="w-4 h-4 text-fg-muted group-hover:text-accent group-hover:translate-x-0.5 transition-all shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
                 </svg>
               </Link>
@@ -131,45 +151,64 @@ export default async function FavouritesPage() {
             </p>
           </div>
         ) : (
-          <div className="space-y-2">
-            {favourites.map((f) => (
-              <Link
-                key={f.id}
-                href={`/read/${f.chapters.id}`}
-                className="flex items-center gap-4 bg-surface border border-border rounded-xl p-4 hover:border-accent/40 transition-all group"
-              >
-                {/* Icon */}
-                <div className="w-10 h-10 rounded-lg bg-red-500/10 border border-red-500/20 flex items-center justify-center flex-shrink-0">
-                  <svg className="w-5 h-5 text-red-400" fill="currentColor" viewBox="0 0 24 24">
-                    <path d="M21 8.25c0-2.485-2.099-4.5-4.688-4.5-1.935 0-3.597 1.126-4.312 2.733-.715-1.607-2.377-2.733-4.313-2.733C5.1 3.75 3 5.765 3 8.25c0 7.22 9 12 9 12s9-4.78 9-12z" />
+          <div className="space-y-4">
+            <div className="space-y-2">
+              {favourites.map((f) => (
+                <Link
+                  key={f.id}
+                  href={`/read/${f.chapters.id}`}
+                  className="flex items-center gap-4 bg-surface border border-border rounded-xl p-4 hover:border-accent/40 transition-all group"
+                >
+                  {/* Icon */}
+                  <div className="w-10 h-10 rounded-lg bg-red-500/10 border border-red-500/20 flex items-center justify-center shrink-0">
+                    <svg className="w-5 h-5 text-red-400" fill="currentColor" viewBox="0 0 24 24">
+                      <path d="M21 8.25c0-2.485-2.099-4.5-4.688-4.5-1.935 0-3.597 1.126-4.312 2.733-.715-1.607-2.377-2.733-4.313-2.733C5.1 3.75 3 5.765 3 8.25c0 7.22 9 12 9 12s9-4.78 9-12z" />
+                    </svg>
+                  </div>
+
+                  {/* Info */}
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-fg group-hover:text-accent transition-colors truncate">
+                      {f.chapters.title}
+                    </p>
+                    <p className="text-xs text-fg-muted truncate">
+                      {f.chapters.novels.title} &middot; Chapter {f.chapters.chapter_number}
+                      {f.chapters.word_count > 0 && ` · ${f.chapters.word_count.toLocaleString()} words`}
+                    </p>
+                  </div>
+
+                  {/* Date */}
+                  <span className="text-xs text-fg-muted shrink-0 hidden sm:block">
+                    {formatDateShort(f.created_at)}
+                  </span>
+
+                  {/* Arrow */}
+                  <svg className="w-4 h-4 text-fg-muted group-hover:text-accent group-hover:translate-x-0.5 transition-all shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
                   </svg>
-                </div>
+                </Link>
+              ))}
+            </div>
 
-                {/* Info */}
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold text-fg group-hover:text-accent transition-colors truncate">
-                    {f.chapters.title}
-                  </p>
-                  <p className="text-xs text-fg-muted truncate">
-                    {f.chapters.novels.title} &middot; Chapter {f.chapters.chapter_number}
-                    {f.chapters.word_count > 0 && ` · ${f.chapters.word_count.toLocaleString()} words`}
-                  </p>
-                </div>
+            <div className="flex items-center justify-between gap-3">
+              {hasPrev ? (
+                <Link href={`/favourites?page=${page - 1}`} className="text-sm px-3 py-2 rounded-lg border border-border hover:border-accent/40 transition-colors">
+                  Previous
+                </Link>
+              ) : <span />}
 
-                {/* Date */}
-                <span className="text-xs text-fg-muted flex-shrink-0 hidden sm:block">
-                  {new Date(f.created_at).toLocaleDateString()}
-                </span>
+              <span className="text-xs text-fg-muted">Page {page} of {totalPages}</span>
 
-                {/* Arrow */}
-                <svg className="w-4 h-4 text-fg-muted group-hover:text-accent group-hover:translate-x-0.5 transition-all flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-                </svg>
-              </Link>
-            ))}
+              {hasNext ? (
+                <Link href={`/favourites?page=${page + 1}`} className="text-sm px-3 py-2 rounded-lg border border-border hover:border-accent/40 transition-colors">
+                  Next
+                </Link>
+              ) : <span />}
+            </div>
           </div>
         )}
       </main>
     </div>
   );
 }
+

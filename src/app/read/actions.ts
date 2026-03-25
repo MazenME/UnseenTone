@@ -1,9 +1,9 @@
 "use server";
 
 import { headers } from "next/headers";
-import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { commentRateLimit, likeRateLimit, bookmarkRateLimit } from "@/lib/redis";
+import { logger } from "@/lib/logger";
 
 // ── Helpers ──────────────────────────────────────────────────
 
@@ -49,53 +49,82 @@ async function verifyTurnstile(token: string): Promise<boolean> {
   return json.success === true;
 }
 
+const MAX_COMMENT_REPLY_DEPTH = 3;
+
 // ── Comments ─────────────────────────────────────────────────
 
 export interface CommentRow {
   id: string;
+  chapter_id: string;
   body: string;
   created_at: string;
   user_id: string;
   parent_id: string | null;
+  depth: number;
   likes: number;
   dislikes: number;
   user_reaction: "like" | "dislike" | null;
   users_profile: {
     id: string;
     display_name: string | null;
-    email: string;
+    email: string | null;
     avatar_url: string | null;
-  };
+  } | null;
   replies?: CommentRow[];
+}
+
+type RawComment = Omit<CommentRow, "likes" | "dislikes" | "user_reaction" | "replies" | "depth">;
+type RawProfile = {
+  id?: string;
+  display_name?: string | null;
+  email?: string | null;
+  avatar_url?: string | null;
+};
+type RawCommentDbRow = Omit<RawComment, "users_profile"> & {
+  users_profile: RawProfile | RawProfile[] | null;
+};
+
+function normalizeProfile(profile: RawProfile | RawProfile[] | null, fallbackUserId: string): CommentRow["users_profile"] {
+  const value = Array.isArray(profile) ? (profile[0] ?? null) : profile;
+  if (!value) return null;
+  return {
+    id: value.id ?? fallbackUserId,
+    display_name: value.display_name ?? null,
+    email: value.email ?? null,
+    avatar_url: value.avatar_url ?? null,
+  };
 }
 
 export async function getChapterComments(chapterId: string): Promise<CommentRow[]> {
   const { supabase, user } = await getSessionUser();
   const { data, error } = await supabase
     .from("comments")
-    .select("id, body, created_at, user_id, parent_id, users_profile(id, display_name, email, avatar_url)")
+    .select("id, chapter_id, body, created_at, user_id, parent_id, users_profile(id, display_name, email, avatar_url)")
     .eq("chapter_id", chapterId)
     .eq("is_deleted", false)
     .order("created_at", { ascending: true });
 
   if (error) {
-    console.error("getChapterComments:", error.message);
+    logger.error("getChapterComments failed", { chapterId, error: error.message });
     return [];
   }
 
-  const raw = (data as unknown as any[]) || [];
+  const raw: RawComment[] = ((data || []) as RawCommentDbRow[]).map((row) => ({
+    ...row,
+    users_profile: normalizeProfile(row.users_profile, row.user_id),
+  }));
 
   // Fetch reaction counts for all comment IDs
   const commentIds = raw.map((c) => c.id);
-  let reactionCounts: Record<string, { likes: number; dislikes: number }> = {};
-  let userReactions: Record<string, "like" | "dislike"> = {};
+  const reactionCounts: Record<string, { likes: number; dislikes: number }> = {};
+  const userReactions: Record<string, "like" | "dislike"> = {};
 
   if (commentIds.length > 0) {
-    // Parallelize reaction + user-reaction queries
+    // Parallelize aggregate reaction counts + current user reaction lookup
     const [{ data: reactions }, { data: myReactions }] = await Promise.all([
       supabase
-        .from("comment_reactions")
-        .select("comment_id, reaction_type")
+        .from("v_comment_reaction_counts")
+        .select("comment_id, likes, dislikes")
         .in("comment_id", commentIds),
       user
         ? supabase
@@ -107,9 +136,10 @@ export async function getChapterComments(chapterId: string): Promise<CommentRow[
     ]);
 
     for (const r of reactions || []) {
-      if (!reactionCounts[r.comment_id]) reactionCounts[r.comment_id] = { likes: 0, dislikes: 0 };
-      if (r.reaction_type === "like") reactionCounts[r.comment_id].likes++;
-      else reactionCounts[r.comment_id].dislikes++;
+      reactionCounts[r.comment_id] = {
+        likes: r.likes || 0,
+        dislikes: r.dislikes || 0,
+      };
     }
 
     for (const r of myReactions || []) {
@@ -119,6 +149,7 @@ export async function getChapterComments(chapterId: string): Promise<CommentRow[
 
   const enriched: CommentRow[] = raw.map((c) => ({
     ...c,
+    depth: 0,
     likes: reactionCounts[c.id]?.likes ?? 0,
     dislikes: reactionCounts[c.id]?.dislikes ?? 0,
     user_reaction: userReactions[c.id] ?? null,
@@ -141,7 +172,69 @@ export async function getChapterComments(chapterId: string): Promise<CommentRow[
     }
   }
 
+  const applyDepth = (list: CommentRow[], depth: number) => {
+    for (const item of list) {
+      item.depth = depth;
+      if (item.replies?.length) applyDepth(item.replies, depth + 1);
+    }
+  };
+  applyDepth(topLevel, 0);
+
   return topLevel;
+}
+
+export async function getCommentNode(commentId: string): Promise<CommentRow | null> {
+  const { supabase, user } = await getSessionUser();
+
+  const { data: comment, error } = await supabase
+    .from("comments")
+    .select("id, chapter_id, body, created_at, user_id, parent_id, users_profile(id, display_name, email, avatar_url)")
+    .eq("id", commentId)
+    .eq("is_deleted", false)
+    .maybeSingle();
+
+  if (error || !comment) return null;
+
+  const [{ data: reaction }, { data: myReaction }] = await Promise.all([
+    supabase
+      .from("v_comment_reaction_counts")
+      .select("comment_id, likes, dislikes")
+      .eq("comment_id", commentId)
+      .maybeSingle(),
+    user
+      ? supabase
+          .from("comment_reactions")
+          .select("reaction_type")
+          .eq("comment_id", commentId)
+          .eq("user_id", user.id)
+          .maybeSingle()
+      : Promise.resolve({ data: null }),
+  ]);
+
+  let depth = 0;
+  let parentId = comment.parent_id as string | null;
+  while (parentId) {
+    depth += 1;
+    const { data: parent } = await supabase
+      .from("comments")
+      .select("parent_id")
+      .eq("id", parentId)
+      .maybeSingle();
+    parentId = parent?.parent_id ?? null;
+    if (depth > 20) break;
+  }
+
+  const commentRow = comment as RawCommentDbRow;
+
+  return {
+    ...commentRow,
+    users_profile: normalizeProfile(commentRow.users_profile, commentRow.user_id),
+    depth,
+    likes: reaction?.likes || 0,
+    dislikes: reaction?.dislikes || 0,
+    user_reaction: (myReaction?.reaction_type as "like" | "dislike" | undefined) ?? null,
+    replies: [],
+  };
 }
 
 export async function submitComment(
@@ -178,7 +271,40 @@ export async function submitComment(
   if (!trimmed) return { error: "Comment cannot be empty." };
   if (trimmed.length > 2000) return { error: "Comment is too long (max 2000 characters)." };
 
-  // 6. Insert
+  // 6. Validate reply chain depth and scope when this is a reply
+  if (parentId) {
+    let currentParentId: string | null = parentId;
+    let currentDepth = 0;
+
+    while (currentParentId) {
+      currentDepth += 1;
+      if (currentDepth > MAX_COMMENT_REPLY_DEPTH) {
+        return { error: `Replies can be nested up to ${MAX_COMMENT_REPLY_DEPTH} levels.` };
+      }
+
+      const parentResult = await supabase
+        .from("comments")
+        .select("id, chapter_id, parent_id, is_deleted")
+        .eq("id", currentParentId)
+        .maybeSingle();
+
+      const parent = (parentResult.data as {
+        id: string;
+        chapter_id: string;
+        parent_id: string | null;
+        is_deleted: boolean;
+      } | null);
+      const parentError = parentResult.error;
+
+      if (parentError || !parent) return { error: "The comment you are replying to no longer exists." };
+      if (parent.chapter_id !== chapterId) return { error: "Invalid reply target." };
+      if (parent.is_deleted) return { error: "You cannot reply to a deleted comment." };
+
+      currentParentId = parent.parent_id;
+    }
+  }
+
+  // 7. Insert
   const { error } = await supabase.from("comments").insert({
     chapter_id: chapterId,
     user_id: user.id,
@@ -235,12 +361,12 @@ export async function toggleCommentReaction(
   const [{ count: likes }, { count: dislikes }] = await Promise.all([
     supabase
       .from("comment_reactions")
-      .select("*", { count: "exact", head: true })
+      .select("id", { count: "exact", head: true })
       .eq("comment_id", commentId)
       .eq("reaction_type", "like"),
     supabase
       .from("comment_reactions")
-      .select("*", { count: "exact", head: true })
+      .select("id", { count: "exact", head: true })
       .eq("comment_id", commentId)
       .eq("reaction_type", "dislike"),
   ]);
@@ -255,29 +381,24 @@ export async function getChapterLikeState(
 ): Promise<{ count: number; liked: boolean }> {
   const { supabase, user } = await getSessionUser();
 
-  // Parallelize count + user-like check
-  const queries: PromiseLike<any>[] = [
-    supabase
-      .from("chapter_likes")
-      .select("*", { count: "exact", head: true })
-      .eq("chapter_id", chapterId),
-  ];
-  if (user) {
-    queries.push(
-      supabase
+  const countPromise = supabase
+    .from("chapter_likes")
+    .select("id", { count: "exact", head: true })
+    .eq("chapter_id", chapterId);
+
+  const likedPromise = user
+    ? supabase
         .from("chapter_likes")
         .select("id")
         .eq("chapter_id", chapterId)
         .eq("user_id", user.id)
         .maybeSingle()
-    );
-  }
+    : Promise.resolve({ data: null, error: null });
 
-  const results = await Promise.all(queries);
-  const count = results[0].count ?? 0;
-  const liked = user ? !!results[1].data : false;
+  const [{ count }, likedResult] = await Promise.all([countPromise, likedPromise]);
+  const liked = !!likedResult.data;
 
-  return { count, liked };
+  return { count: count ?? 0, liked };
 }
 
 export async function toggleLike(
@@ -313,7 +434,7 @@ export async function toggleLike(
   // Return new state
   const { count } = await supabase
     .from("chapter_likes")
-    .select("*", { count: "exact", head: true })
+    .select("id", { count: "exact", head: true })
     .eq("chapter_id", chapterId);
 
   return { liked: !existing, count: count ?? 0 };
@@ -334,7 +455,7 @@ export async function getBookmarkState(
     .eq("user_id", user.id)
     .maybeSingle();
 
-  if (error) console.error("getBookmarkState:", error.message);
+  if (error) logger.error("getBookmarkState failed", { chapterId, error: error.message });
   return { bookmarked: !!data };
 }
 
@@ -358,14 +479,14 @@ export async function toggleBookmark(
     .maybeSingle();
 
   if (selectErr) {
-    console.error("toggleBookmark select:", selectErr.message);
+    logger.error("toggleBookmark select failed", { chapterId, error: selectErr.message });
     return { error: selectErr.message };
   }
 
   if (existing) {
     const { error: delErr } = await supabase.from("bookmarks").delete().eq("id", existing.id);
     if (delErr) {
-      console.error("toggleBookmark delete:", delErr.message);
+      logger.error("toggleBookmark delete failed", { chapterId, error: delErr.message });
       return { error: delErr.message };
     }
   } else {
@@ -374,7 +495,7 @@ export async function toggleBookmark(
       user_id: user.id,
     });
     if (insErr) {
-      console.error("toggleBookmark insert:", insErr.message);
+      logger.error("toggleBookmark insert failed", { chapterId, error: insErr.message });
       return { error: insErr.message };
     }
   }
@@ -389,31 +510,27 @@ export async function getChapterRatingState(
 ): Promise<{ average: number; count: number; userRating: number | null }> {
   const { supabase, user } = await getSessionUser();
 
-  // Parallelize ratings fetch + user rating check
-  const queries: PromiseLike<any>[] = [
-    supabase
-      .from("chapter_ratings")
-      .select("rating")
-      .eq("chapter_id", chapterId),
-  ];
-  if (user) {
-    queries.push(
-      supabase
+  const statsPromise = supabase
+    .from("v_chapter_rating_stats")
+    .select("avg_rating, rating_count")
+    .eq("chapter_id", chapterId)
+    .maybeSingle();
+
+  const userRatingPromise = user
+    ? supabase
         .from("chapter_ratings")
         .select("rating")
         .eq("chapter_id", chapterId)
         .eq("user_id", user.id)
         .maybeSingle()
-    );
-  }
+    : Promise.resolve({ data: null, error: null });
 
-  const results = await Promise.all(queries);
-  const all = results[0].data || [];
-  const count = all.length;
-  const average = count > 0 ? all.reduce((s: any, r: any) => s + r.rating, 0) / count : 0;
-  const userRating = user ? (results[1].data?.rating ?? null) : null;
+  const [statsResult, userRatingResult] = await Promise.all([statsPromise, userRatingPromise]);
+  const count = statsResult.data?.rating_count || 0;
+  const average = Number(statsResult.data?.avg_rating || 0);
+  const userRating = userRatingResult.data?.rating ?? null;
 
-  return { average: Math.round(average * 10) / 10, count, userRating };
+  return { average, count, userRating };
 }
 
 export async function rateChapter(
@@ -472,68 +589,116 @@ export async function getChapterInteractionState(
 }> {
   const supabase = await createClient();
 
-  const queries: PromiseLike<any>[] = [
-    // 0 – like count
-    supabase
-      .from("chapter_likes")
-      .select("*", { count: "exact", head: true })
-      .eq("chapter_id", chapterId),
-    // 1 – all ratings
-    supabase
-      .from("chapter_ratings")
-      .select("rating")
-      .eq("chapter_id", chapterId),
-  ];
+  const likeCountPromise = supabase
+    .from("chapter_likes")
+    .select("id", { count: "exact", head: true })
+    .eq("chapter_id", chapterId);
 
-  if (userId) {
-    // 2 – user liked?
-    queries.push(
-      supabase
+  const ratingStatsPromise = supabase
+    .from("v_chapter_rating_stats")
+    .select("avg_rating, rating_count")
+    .eq("chapter_id", chapterId)
+    .maybeSingle();
+
+  const likedPromise = userId
+    ? supabase
         .from("chapter_likes")
         .select("id")
         .eq("chapter_id", chapterId)
         .eq("user_id", userId)
         .maybeSingle()
-    );
-    // 3 – user bookmarked?
-    queries.push(
-      supabase
+    : Promise.resolve({ data: null, error: null });
+
+  const bookmarkedPromise = userId
+    ? supabase
         .from("bookmarks")
         .select("id")
         .eq("chapter_id", chapterId)
         .eq("user_id", userId)
         .maybeSingle()
-    );
-    // 4 – user rating
-    queries.push(
-      supabase
+    : Promise.resolve({ data: null, error: null });
+
+  const userRatingPromise = userId
+    ? supabase
         .from("chapter_ratings")
         .select("rating")
         .eq("chapter_id", chapterId)
         .eq("user_id", userId)
         .maybeSingle()
-    );
-  }
+    : Promise.resolve({ data: null, error: null });
 
-  const results = await Promise.all(queries);
+  const [likeCountResult, ratingStatsResult, likedResult, bookmarkedResult, userRatingResult] = await Promise.all([
+    likeCountPromise,
+    ratingStatsPromise,
+    likedPromise,
+    bookmarkedPromise,
+    userRatingPromise,
+  ]);
 
-  const likeCount = results[0].count ?? 0;
-  const ratings = results[1].data || [];
-  const ratingCount = ratings.length;
-  const ratingAverage =
-    ratingCount > 0
-      ? Math.round((ratings.reduce((s: number, r: any) => s + r.rating, 0) / ratingCount) * 10) / 10
-      : 0;
-
-  let liked = false;
-  let bookmarked = false;
-  let userRating: number | null = null;
-
-  if (userId) {
-    liked = !!results[2].data;
-    bookmarked = !!results[3].data;
-    userRating = results[4].data?.rating ?? null;
-  }
+  const likeCount = likeCountResult.count ?? 0;
+  const ratingCount = ratingStatsResult.data?.rating_count || 0;
+  const ratingAverage = Number(ratingStatsResult.data?.avg_rating || 0);
+  const liked = !!likedResult.data;
+  const bookmarked = !!bookmarkedResult.data;
+  const userRating = userRatingResult.data?.rating ?? null;
 
   return { likeCount, liked, bookmarked, ratingAverage, ratingCount, userRating };
+}
+
+export async function syncReadingProgress(input: {
+  novelId: string;
+  chapterId: string;
+  chapterNumber: number;
+  progressPercent: number;
+}): Promise<{ success: boolean; error?: string }> {
+  const { supabase, user } = await getUser();
+  if (!user) return { success: true };
+
+  const chapterProgressPercent = Math.max(0, Math.min(100, Math.round(input.progressPercent)));
+
+  // Persist progress at novel level so it reflects chapter advancement, not only current-page scroll.
+  const [{ count: totalPublishedChapters }, { count: completedChapters }] = await Promise.all([
+    supabase
+      .from("chapters")
+      .select("id", { count: "exact", head: true })
+      .eq("novel_id", input.novelId)
+      .eq("is_published", true),
+    supabase
+      .from("chapters")
+      .select("id", { count: "exact", head: true })
+      .eq("novel_id", input.novelId)
+      .eq("is_published", true)
+      .lt("chapter_number", input.chapterNumber),
+  ]);
+
+  const total = totalPublishedChapters ?? 0;
+  const completed = completedChapters ?? 0;
+  const normalizedProgressPercent =
+    total > 0
+      ? Math.max(0, Math.min(100, Math.round(((completed + chapterProgressPercent / 100) / total) * 100)))
+      : chapterProgressPercent;
+
+  const { error } = await supabase.from("reading_progress").upsert(
+    {
+      user_id: user.id,
+      novel_id: input.novelId,
+      chapter_id: input.chapterId,
+      chapter_number: input.chapterNumber,
+      progress_percent: normalizedProgressPercent,
+      last_read_at: new Date().toISOString(),
+    },
+    { onConflict: "user_id,novel_id" }
+  );
+
+  if (error) {
+    logger.error("syncReadingProgress failed", {
+      userId: user.id,
+      novelId: input.novelId,
+      chapterId: input.chapterId,
+      error: error.message,
+    });
+    return { success: false, error: error.message };
+  }
+
+  return { success: true };
 }

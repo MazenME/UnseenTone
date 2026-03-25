@@ -59,7 +59,13 @@ export default function ThemeManagement() {
   const [isPending, startTransition] = useTransition();
 
   const load = async () => { setLoading(true); setThemes(await getCustomThemes()); setLoading(false); };
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    const timeoutId = setTimeout(() => {
+      void load();
+    }, 0);
+
+    return () => clearTimeout(timeoutId);
+  }, []);
 
   const set = (key: string, val: string) => setForm((f) => ({ ...f, [key]: val }));
 
@@ -212,7 +218,7 @@ export default function ThemeManagement() {
         <div className="space-y-2">
           {themes.map((t) => (
             <div key={t.id} className="bg-surface border border-border rounded-xl p-4 flex flex-col sm:flex-row items-start sm:items-center gap-4">
-              <div className="w-14 h-14 rounded-lg border flex items-center justify-center flex-shrink-0" style={{ backgroundColor: t.bg, borderColor: t.border_color }}>
+              <div className="w-14 h-14 rounded-lg border flex items-center justify-center shrink-0" style={{ backgroundColor: t.bg, borderColor: t.border_color }}>
                 <div className="flex gap-0.5">
                   <div className="w-3 h-3 rounded-full" style={{ backgroundColor: t.accent }} />
                   <div className="w-3 h-3 rounded-full" style={{ backgroundColor: t.fg }} />
@@ -229,7 +235,7 @@ export default function ThemeManagement() {
                   ))}
                 </div>
               </div>
-              <button onClick={() => handleDelete(t.id)} disabled={isPending} className="p-2 text-fg-muted hover:text-red-400 transition-colors flex-shrink-0" title="Delete">
+              <button onClick={() => handleDelete(t.id)} disabled={isPending} className="p-2 text-fg-muted hover:text-red-400 transition-colors shrink-0" title="Delete">
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                 </svg>
@@ -241,3 +247,4 @@ export default function ThemeManagement() {
     </div>
   );
 }
+

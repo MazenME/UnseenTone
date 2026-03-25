@@ -72,11 +72,47 @@ CREATE INDEX IF NOT EXISTS idx_novel_admins_admin ON public.novel_admins(admin_i
 CREATE INDEX IF NOT EXISTS idx_novel_admins_novel ON public.novel_admins(novel_id);
 
 -- ── Optional: helper view for debugging ------------------------
+-- Keep this view free of auth.users fields to avoid accidental
+-- exposure of sensitive auth data via PostgREST.
 CREATE OR REPLACE VIEW public.v_novel_admins AS
-SELECT na.admin_id, u.email, u.raw_user_meta_data->>'role' AS auth_role, p.role AS profile_role, na.novel_id
+SELECT na.admin_id, p.role AS profile_role, na.novel_id, na.created_at
 FROM public.novel_admins na
-JOIN auth.users u ON u.id = na.admin_id
 JOIN public.users_profile p ON p.id = na.admin_id;
+
+ALTER VIEW public.v_novel_admins SET (security_invoker = true);
+
+REVOKE ALL ON TABLE public.v_novel_admins FROM anon, authenticated;
+GRANT SELECT ON TABLE public.v_novel_admins TO authenticated;
+
+-- Enable RLS on the mapping table itself.
+ALTER TABLE public.novel_admins ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "super_admin_manage_novel_admins" ON public.novel_admins;
+CREATE POLICY "super_admin_manage_novel_admins"
+  ON public.novel_admins
+  FOR ALL
+  USING (
+    EXISTS (
+      SELECT 1
+      FROM public.users_profile p
+      WHERE p.id = auth.uid()
+        AND p.role IN ('super_admin', 'admin')
+    )
+  )
+  WITH CHECK (
+    EXISTS (
+      SELECT 1
+      FROM public.users_profile p
+      WHERE p.id = auth.uid()
+        AND p.role IN ('super_admin', 'admin')
+    )
+  );
+
+DROP POLICY IF EXISTS "novel_admin_read_own_mappings" ON public.novel_admins;
+CREATE POLICY "novel_admin_read_own_mappings"
+  ON public.novel_admins
+  FOR SELECT
+  USING (admin_id = auth.uid());
 
 -- Note: RLS policies for novels/chapters/comments should be updated
 -- to allow:

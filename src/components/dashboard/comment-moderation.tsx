@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import Image from "next/image";
 import {
   getComments,
   deleteComment,
@@ -74,7 +75,11 @@ export default function CommentModeration() {
   }, [page, pageSize, showDeleted, search, selectedNovelId, selectedChapterId]);
 
   useEffect(() => {
-    fetchComments();
+    const timeoutId = setTimeout(() => {
+      void fetchComments();
+    }, 0);
+
+    return () => clearTimeout(timeoutId);
   }, [fetchComments]);
 
   const handleSearch = (e: React.FormEvent) => {
@@ -167,7 +172,9 @@ export default function CommentModeration() {
               setSelectedChapterId("");
               setPage(1);
             }}
-            className="bg-bg border border-border rounded-lg px-3 py-2 text-sm text-fg focus:outline-none focus:ring-2 focus:ring-accent/50 w-full sm:w-auto sm:min-w-[180px]"
+            title="Filter by novel"
+            aria-label="Filter comments by novel"
+            className="bg-bg border border-border rounded-lg px-3 py-2 text-sm text-fg focus:outline-none focus:ring-2 focus:ring-accent/50 w-full sm:w-auto sm:min-w-45"
           >
             <option value="">All Novels</option>
             {novels.map((n) => (
@@ -186,7 +193,9 @@ export default function CommentModeration() {
                   setSelectedChapterId(e.target.value);
                   setPage(1);
                 }}
-                className="bg-bg border border-border rounded-lg px-3 py-2 text-sm text-fg focus:outline-none focus:ring-2 focus:ring-accent/50 w-full sm:w-auto sm:min-w-[200px]"
+                title="Filter by chapter"
+                aria-label="Filter comments by chapter"
+                className="bg-bg border border-border rounded-lg px-3 py-2 text-sm text-fg focus:outline-none focus:ring-2 focus:ring-accent/50 w-full sm:w-auto sm:min-w-50"
               >
                 <option value="">All Chapters</option>
                 {selectedNovel.chapters.map((ch) => (
@@ -247,11 +256,13 @@ export default function CommentModeration() {
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-2">
                   <div className="flex items-center gap-2 min-w-0">
                     {/* Avatar */}
-                    <div className="w-8 h-8 rounded-full bg-accent/20 flex items-center justify-center flex-shrink-0">
+                    <div className="w-8 h-8 rounded-full bg-accent/20 flex items-center justify-center shrink-0">
                       {comment.users_profile?.avatar_url ? (
-                        <img
+                        <Image
                           src={comment.users_profile.avatar_url}
                           alt=""
+                          width={32}
+                          height={32}
                           className="w-8 h-8 rounded-full object-cover"
                         />
                       ) : (
@@ -278,7 +289,7 @@ export default function CommentModeration() {
                         )}
                       </div>
                       <div className="flex items-center gap-2 text-xs text-fg-muted flex-wrap">
-                        <span className="truncate max-w-[150px] sm:max-w-none">{comment.users_profile?.email}</span>
+                        <span className="truncate max-w-37.5 sm:max-w-none">{comment.users_profile?.email}</span>
                         <span>·</span>
                         <span>{new Date(comment.created_at).toLocaleString()}</span>
                       </div>
@@ -287,7 +298,7 @@ export default function CommentModeration() {
 
                   {/* Chapter & Novel info */}
                   {comment.chapters && (
-                    <div className="text-xs text-fg-muted text-right flex-shrink-0">
+                    <div className="text-xs text-fg-muted text-right shrink-0">
                       <div className="font-medium text-fg/70">
                         {comment.chapters.novels?.title}
                       </div>
@@ -297,7 +308,7 @@ export default function CommentModeration() {
                 </div>
 
                 {/* Comment Body */}
-                <div className="text-sm text-fg/90 bg-bg/50 rounded-lg p-3 my-2 break-words">
+                <div className="text-sm text-fg/90 bg-bg/50 rounded-lg p-3 my-2 wrap-break-word">
                   {comment.body}
                 </div>
 
@@ -473,3 +484,4 @@ export default function CommentModeration() {
     </div>
   );
 }
+
