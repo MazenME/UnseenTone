@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { motion } from "framer-motion";
+import { useRouter } from "next/navigation";
 import ThemeSwitcher from "@/components/theme-switcher";
 import ReaderControls, { useReaderSettings } from "@/components/reader-controls";
 import CommentSection from "@/components/comment-section";
@@ -10,7 +11,7 @@ import BookmarkButton from "@/components/bookmark-button";
 import RatingStars from "@/components/rating-stars";
 import { rateChapter, syncReadingProgress } from "@/app/read/actions";
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
-import DOMPurify from "dompurify";
+import createDOMPurify from "dompurify";
 
 interface Chapter {
   id: string;
@@ -51,6 +52,7 @@ interface Props {
 }
 
 export default function ChapterReaderClient({ chapter, novel, prevChapter, nextChapter, userId, initialLikeCount, initialLiked, initialBookmarked, initialRatingAverage, initialRatingCount, initialUserRating }: Props) {
+  const router = useRouter();
   const { settings, updateSettings, resetSettings, mounted } = useReaderSettings();
   const [showTopBar, setShowTopBar] = useState(true);
   const [lastScrollY, setLastScrollY] = useState(0);
@@ -60,6 +62,9 @@ export default function ChapterReaderClient({ chapter, novel, prevChapter, nextC
   const chapterContentRef = useRef<HTMLDivElement | null>(null);
 
   const sanitizedContent = useMemo(() => {
+    if (typeof window === "undefined") return chapter.content;
+
+    const DOMPurify = createDOMPurify(window);
     const cleaned = DOMPurify.sanitize(chapter.content, {
       USE_PROFILES: { html: true },
     });
@@ -134,6 +139,53 @@ export default function ChapterReaderClient({ chapter, novel, prevChapter, nextC
     content.style.fontFamily = mounted ? settings.fontFamily : "";
     content.style.lineHeight = String(mounted ? settings.lineHeight : 1.8);
   }, [mounted, settings]);
+
+  useEffect(() => {
+    const prevHref = prevChapter ? `/read/${prevChapter.id}` : null;
+    const nextHref = nextChapter ? `/read/${nextChapter.id}` : null;
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
+      if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+
+      const target = event.target as HTMLElement | null;
+      if (target) {
+        const tag = target.tagName;
+        const isTypingTarget =
+          target.isContentEditable ||
+          tag === "INPUT" ||
+          tag === "TEXTAREA" ||
+          tag === "SELECT";
+        if (isTypingTarget) return;
+      }
+
+      const key = event.key.toLowerCase();
+      const code = event.code;
+      const wantsPrev =
+        event.key === "ArrowLeft" ||
+        code === "ArrowLeft" ||
+        code === "KeyA" ||
+        key === "a";
+      const wantsNext =
+        event.key === "ArrowRight" ||
+        code === "ArrowRight" ||
+        code === "KeyD" ||
+        key === "d";
+
+      if (wantsPrev && prevHref) {
+        event.preventDefault();
+        router.push(prevHref);
+      }
+
+      if (wantsNext && nextHref) {
+        event.preventDefault();
+        router.push(nextHref);
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [nextChapter, prevChapter, router]);
 
   const estimatedReadTime = Math.max(1, Math.round(chapter.word_count / 250));
 
@@ -326,6 +378,10 @@ export default function ChapterReaderClient({ chapter, novel, prevChapter, nextC
               </Link>
             )}
           </div>
+
+          <p className="mt-3 text-xs text-fg-muted text-center">
+            Keyboard: Left Arrow / A = Previous chapter, Right Arrow / D = Next chapter
+          </p>
 
           {/* Back to novel page */}
           <div className="text-center mt-8">

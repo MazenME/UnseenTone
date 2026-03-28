@@ -1,7 +1,9 @@
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import Image from "next/image";
+import Link from "next/link";
 import { formatDateShort } from "@/lib/date";
+import ChapterPaginationHotkeys from "@/components/dashboard/chapter-pagination-hotkeys";
 
 interface NovelAnalytics {
   id: string;
@@ -18,6 +20,18 @@ interface NovelAnalytics {
   novel_rating_count: number;
   chapter_avg_rating: number;
   chapter_rating_count: number;
+  recent_novel_raters?: {
+    user_id: string;
+    display_name: string;
+    rating: number;
+    created_at: string;
+  }[];
+  recent_readers?: {
+    user_id: string;
+    display_name: string;
+    progress_percent: number;
+    last_read_at: string;
+  }[];
   chapters: {
     id: string;
     chapter_number: number;
@@ -41,6 +55,39 @@ interface DashboardAnalyticsPayload {
   totalReads: number;
   totalComments: number;
   novelAnalytics: NovelAnalytics[];
+}
+
+interface NovelRatingRow {
+  novel_id: string;
+  user_id: string;
+  rating: number;
+  created_at: string;
+}
+
+interface ReadingProgressRow {
+  novel_id: string;
+  user_id: string;
+  progress_percent: number;
+  last_read_at: string;
+}
+
+interface UserProfileLite {
+  id: string;
+  display_name: string | null;
+  email: string | null;
+}
+
+interface DashboardSearchParams {
+  novelsPage?: string;
+  novelsPerPage?: string;
+  chaptersPage?: string;
+  chaptersPerPage?: string;
+}
+
+function parsePositiveInt(value: string | undefined, fallback: number) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(1, Math.floor(parsed));
 }
 
 async function getAnalytics() {
@@ -93,19 +140,155 @@ async function getAnalytics() {
 
   const payload = rpcPayload as DashboardAnalyticsPayload;
 
+  const novelAnalyticsBase = payload.novelAnalytics || [];
+  const novelIds = novelAnalyticsBase.map((n) => n.id);
+
+  let novelAnalytics = novelAnalyticsBase;
+
+  if (novelIds.length > 0) {
+    const [{ data: ratingRows }, { data: readingRows }] = await Promise.all([
+      admin
+        .from("novel_ratings")
+        .select("novel_id, user_id, rating, created_at")
+        .in("novel_id", novelIds)
+        .order("created_at", { ascending: false })
+        .limit(2000),
+      admin
+        .from("reading_progress")
+        .select("novel_id, user_id, progress_percent, last_read_at")
+        .in("novel_id", novelIds)
+        .order("last_read_at", { ascending: false })
+        .limit(3000),
+    ]);
+
+    const safeRatingRows = (ratingRows || []) as NovelRatingRow[];
+    const safeReadingRows = (readingRows || []) as ReadingProgressRow[];
+
+    const userIds = Array.from(
+      new Set([
+        ...safeRatingRows.map((r) => r.user_id),
+        ...safeReadingRows.map((r) => r.user_id),
+      ])
+    );
+
+    let userMap = new Map<string, string>();
+
+    if (userIds.length > 0) {
+      const { data: profileRows } = await admin
+        .from("users_profile")
+        .select("id, display_name, email")
+        .in("id", userIds);
+
+      userMap = new Map(
+        ((profileRows || []) as UserProfileLite[]).map((u) => {
+          const fallback = u.email?.split("@")[0] || "Reader";
+          return [u.id, u.display_name || fallback];
+        })
+      );
+    }
+
+    novelAnalytics = novelAnalyticsBase.map((novel) => {
+      const recentRaters = safeRatingRows
+        .filter((r) => r.novel_id === novel.id)
+        .slice(0, 8)
+        .map((r) => ({
+          user_id: r.user_id,
+          display_name: userMap.get(r.user_id) || "Reader",
+          rating: r.rating,
+          created_at: r.created_at,
+        }));
+
+      const recentReaders = safeReadingRows
+        .filter((r) => r.novel_id === novel.id)
+        .slice(0, 8)
+        .map((r) => ({
+          user_id: r.user_id,
+          display_name: userMap.get(r.user_id) || "Reader",
+          progress_percent: r.progress_percent,
+          last_read_at: r.last_read_at,
+        }));
+
+      return {
+        ...novel,
+        recent_novel_raters: recentRaters,
+        recent_readers: recentReaders,
+      };
+    });
+  }
+
   return {
     role,
     totalUsers: payload.totalUsers || 0,
     totalNovels: payload.totalNovels || 0,
     totalReads: payload.totalReads || 0,
     totalComments: payload.totalComments || 0,
-    novelAnalytics: payload.novelAnalytics || [],
+    novelAnalytics,
   };
 }
 
-export default async function DashboardPage() {
+export default async function DashboardPage({
+  searchParams,
+}: {
+  searchParams: Promise<DashboardSearchParams>;
+}) {
+  const params = await searchParams;
   const { role, totalUsers, totalNovels, totalReads, totalComments, novelAnalytics } =
     await getAnalytics();
+
+  const novelPerPageOptions = [3, 5, 10, 20];
+  const chapterPerPageOptions = [5, 10, 20, 50];
+
+  const novelsPerPageCandidate = parsePositiveInt(params.novelsPerPage, 5);
+  const chaptersPerPageCandidate = parsePositiveInt(params.chaptersPerPage, 10);
+
+  const novelsPerPage = novelPerPageOptions.includes(novelsPerPageCandidate)
+    ? novelsPerPageCandidate
+    : 5;
+  const chaptersPerPage = chapterPerPageOptions.includes(chaptersPerPageCandidate)
+    ? chaptersPerPageCandidate
+    : 10;
+
+  const totalNovelPages = Math.max(1, Math.ceil(novelAnalytics.length / novelsPerPage));
+  const novelsPage = Math.min(
+    totalNovelPages,
+    parsePositiveInt(params.novelsPage, 1)
+  );
+  const chaptersPage = parsePositiveInt(params.chaptersPage, 1);
+
+  const novelsFrom = (novelsPage - 1) * novelsPerPage;
+  const pagedNovels = novelAnalytics.slice(novelsFrom, novelsFrom + novelsPerPage);
+  const maxChapterPagesInView = Math.max(
+    1,
+    ...pagedNovels.map((n) => Math.max(1, Math.ceil(n.chapters.length / chaptersPerPage)))
+  );
+  const hasChapterPrevGlobal = chaptersPage > 1;
+  const hasChapterNextGlobal = chaptersPage < maxChapterPagesInView;
+
+  const buildHref = (updates: Partial<DashboardSearchParams>) => {
+    const merged: DashboardSearchParams = {
+      novelsPage: String(novelsPage),
+      novelsPerPage: String(novelsPerPage),
+      chaptersPage: String(chaptersPage),
+      chaptersPerPage: String(chaptersPerPage),
+      ...updates,
+    };
+
+    const qp = new URLSearchParams();
+    if (merged.novelsPage) qp.set("novelsPage", merged.novelsPage);
+    if (merged.novelsPerPage) qp.set("novelsPerPage", merged.novelsPerPage);
+    if (merged.chaptersPage) qp.set("chaptersPage", merged.chaptersPage);
+    if (merged.chaptersPerPage) qp.set("chaptersPerPage", merged.chaptersPerPage);
+
+    const qs = qp.toString();
+    return qs ? `/dashboard?${qs}` : "/dashboard";
+  };
+
+  const chapterPrevHref = hasChapterPrevGlobal
+    ? buildHref({ chaptersPage: String(chaptersPage - 1) })
+    : undefined;
+  const chapterNextHref = hasChapterNextGlobal
+    ? buildHref({ chaptersPage: String(chaptersPage + 1) })
+    : undefined;
 
   const stats = (
     role === "novel_admin"
@@ -207,14 +390,82 @@ export default async function DashboardPage() {
 
       {/* Per-Novel Analytics */}
       <div className="space-y-6">
-        <h2 className="text-xl font-bold text-fg">Novel Analytics</h2>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-xl font-bold text-fg">Novel Analytics</h2>
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <span className="text-fg-muted">Novels/page:</span>
+            {novelPerPageOptions.map((size) => (
+              <Link
+                key={`novel-size-${size}`}
+                href={buildHref({ novelsPerPage: String(size), novelsPage: "1" })}
+                className={`px-2.5 py-1 rounded-md border transition-colors ${
+                  novelsPerPage === size
+                    ? "border-accent text-accent bg-accent/10"
+                    : "border-border text-fg-muted hover:border-accent/40"
+                }`}
+              >
+                {size}
+              </Link>
+            ))}
+            <span className="text-fg-muted ml-2">Chapters/page:</span>
+            {chapterPerPageOptions.map((size) => (
+              <Link
+                key={`chapter-size-${size}`}
+                href={buildHref({ chaptersPerPage: String(size), chaptersPage: "1" })}
+                className={`px-2.5 py-1 rounded-md border transition-colors ${
+                  chaptersPerPage === size
+                    ? "border-accent text-accent bg-accent/10"
+                    : "border-border text-fg-muted hover:border-accent/40"
+                }`}
+              >
+                {size}
+              </Link>
+            ))}
+          </div>
+        </div>
+
+        <ChapterPaginationHotkeys prevHref={chapterPrevHref} nextHref={chapterNextHref} />
+
+        <div className="text-xs text-fg-muted bg-surface border border-border rounded-lg px-4 py-2">
+          Chapters keyboard navigation: Left Arrow / A = Previous, Right Arrow / D = Next
+        </div>
+
+        {novelAnalytics.length > 0 && (
+          <div className="flex items-center justify-between gap-3 bg-surface border border-border rounded-lg px-4 py-2 text-sm">
+            {novelsPage > 1 ? (
+              <Link
+                href={buildHref({ novelsPage: String(novelsPage - 1) })}
+                className="px-3 py-1.5 rounded-md border border-border hover:border-accent/40 transition-colors"
+              >
+                Previous Novels
+              </Link>
+            ) : (
+              <span />
+            )}
+
+            <span className="text-fg-muted">
+              Novel page {novelsPage} of {totalNovelPages}
+            </span>
+
+            {novelsPage < totalNovelPages ? (
+              <Link
+                href={buildHref({ novelsPage: String(novelsPage + 1) })}
+                className="px-3 py-1.5 rounded-md border border-border hover:border-accent/40 transition-colors"
+              >
+                Next Novels
+              </Link>
+            ) : (
+              <span />
+            )}
+          </div>
+        )}
 
         {novelAnalytics.length === 0 ? (
           <div className="bg-surface border border-border rounded-xl px-6 py-12 text-center text-fg-muted">
             No novels yet. Create one to see analytics.
           </div>
         ) : (
-          novelAnalytics.map((novel) => {
+          pagedNovels.map((novel) => {
             const avgReadsPerChapter =
               novel.chapter_count > 0
                 ? Math.round(novel.total_reads / novel.chapter_count)
@@ -225,6 +476,16 @@ export default async function DashboardPage() {
             );
             const readPercent =
               totalReads > 0 ? ((novel.total_reads / totalReads) * 100).toFixed(1) : "0";
+            const chapterTotalPages = Math.max(
+              1,
+              Math.ceil(novel.chapters.length / chaptersPerPage)
+            );
+            const safeChapterPage = Math.min(chaptersPage, chapterTotalPages);
+            const chapterFrom = (safeChapterPage - 1) * chaptersPerPage;
+            const pagedChapters = novel.chapters.slice(
+              chapterFrom,
+              chapterFrom + chaptersPerPage
+            );
 
             return (
               <div
@@ -302,9 +563,61 @@ export default async function DashboardPage() {
                   </div>
                 )}
 
+                {/* Audience Row */}
+                <div className="px-5 py-4 border-t border-border space-y-3">
+                  <div>
+                    <p className="text-xs uppercase tracking-wider text-fg-muted mb-2">Recent Raters</p>
+                    {novel.recent_novel_raters && novel.recent_novel_raters.length > 0 ? (
+                      <div className="flex flex-wrap gap-2">
+                        {novel.recent_novel_raters.map((r) => (
+                          <span
+                            key={`${novel.id}-rater-${r.user_id}`}
+                            className="inline-flex items-center gap-1 rounded-full bg-amber-500/12 text-amber-300 border border-amber-500/25 px-2.5 py-1 text-xs"
+                            title={`Rated ${r.rating}/10 on ${formatDateShort(r.created_at)}`}
+                          >
+                            <span>{r.display_name}</span>
+                            <span className="text-amber-200/80">({r.rating}/10)</span>
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-sm text-fg-muted">No ratings yet.</p>
+                    )}
+                  </div>
+
+                  <div>
+                    <p className="text-xs uppercase tracking-wider text-fg-muted mb-2">Recent Readers</p>
+                    {novel.recent_readers && novel.recent_readers.length > 0 ? (
+                      <div className="flex flex-wrap gap-2">
+                        {novel.recent_readers.map((r) => (
+                          <span
+                            key={`${novel.id}-reader-${r.user_id}`}
+                            className="inline-flex items-center gap-1 rounded-full bg-cyan-500/12 text-cyan-300 border border-cyan-500/25 px-2.5 py-1 text-xs"
+                            title={`Last read on ${formatDateShort(r.last_read_at)}`}
+                          >
+                            <span>{r.display_name}</span>
+                            <span className="text-cyan-200/80">({r.progress_percent}%)</span>
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-sm text-fg-muted">No readers tracked yet.</p>
+                    )}
+                  </div>
+                </div>
+
                 {/* Chapter Breakdown Table */}
                 {novel.chapters.length > 0 && (
                   <div className="overflow-x-auto">
+                    <div className="px-5 py-2.5 border-t border-border text-xs text-fg-muted flex items-center justify-between gap-3">
+                      <span>
+                        Showing chapters {chapterFrom + 1}-
+                        {Math.min(chapterFrom + chaptersPerPage, novel.chapters.length)} of {novel.chapters.length}
+                      </span>
+                      <span>
+                        Chapter page {safeChapterPage} of {chapterTotalPages} (global)
+                      </span>
+                    </div>
                     <table className="w-full text-sm">
                       <thead>
                         <tr className="border-t border-border text-left text-fg-muted">
@@ -318,7 +631,7 @@ export default async function DashboardPage() {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-border">
-                        {novel.chapters.map((ch) => {
+                        {pagedChapters.map((ch) => {
                           const barWidth =
                             novel.total_reads > 0
                               ? Math.max(2, (ch.reads / novel.total_reads) * 100)
@@ -372,11 +685,69 @@ export default async function DashboardPage() {
                         })}
                       </tbody>
                     </table>
+
+                    <div className="px-5 py-3 border-t border-border flex items-center justify-between gap-3 text-sm">
+                      {safeChapterPage > 1 ? (
+                        <Link
+                          href={buildHref({ chaptersPage: String(safeChapterPage - 1) })}
+                          className="px-3 py-1.5 rounded-md border border-border hover:border-accent/40 transition-colors"
+                        >
+                          Previous Chapters
+                        </Link>
+                      ) : (
+                        <span />
+                      )}
+
+                      <span className="text-fg-muted">
+                        Chapter page {safeChapterPage} of {chapterTotalPages}
+                      </span>
+
+                      {safeChapterPage < chapterTotalPages ? (
+                        <Link
+                          href={buildHref({ chaptersPage: String(safeChapterPage + 1) })}
+                          className="px-3 py-1.5 rounded-md border border-border hover:border-accent/40 transition-colors"
+                        >
+                          Next Chapters
+                        </Link>
+                      ) : (
+                        <span />
+                      )}
+                    </div>
                   </div>
                 )}
               </div>
             );
           })
+        )}
+
+        {novelAnalytics.length > 0 && (
+          <div className="flex items-center justify-between gap-3 bg-surface border border-border rounded-lg px-4 py-2 text-sm">
+            {novelsPage > 1 ? (
+              <Link
+                href={buildHref({ novelsPage: String(novelsPage - 1) })}
+                className="px-3 py-1.5 rounded-md border border-border hover:border-accent/40 transition-colors"
+              >
+                Previous Novels
+              </Link>
+            ) : (
+              <span />
+            )}
+
+            <span className="text-fg-muted">
+              Novel page {novelsPage} of {totalNovelPages}
+            </span>
+
+            {novelsPage < totalNovelPages ? (
+              <Link
+                href={buildHref({ novelsPage: String(novelsPage + 1) })}
+                className="px-3 py-1.5 rounded-md border border-border hover:border-accent/40 transition-colors"
+              >
+                Next Novels
+              </Link>
+            ) : (
+              <span />
+            )}
+          </div>
         )}
       </div>
     </div>
